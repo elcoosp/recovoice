@@ -26,6 +26,20 @@ export {
   MAX_CURSOR_GHOSTS,
   MAX_ZOOM_BLUR_PX,
 } from './polish/motion-blur.js';
+export {
+  Spring1D,
+  springConfigFromSmoothingFactor,
+  DEFAULT_SPRING_CONFIG,
+  SwaySpringConfig,
+} from './polish/spring.js';
+export type { SpringConfig } from './polish/spring.js';
+export {
+  computeSwayAngle,
+  MAX_ROTATION,
+  SPEED_REFERENCE,
+  VERTICAL_WEIGHT,
+  INTENSITY_SCALE,
+} from './polish/cursor-sway.js';
 export type {
   Script,
   Segment,

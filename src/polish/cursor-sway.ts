@@ -1,11 +1,3 @@
-#!/usr/bin/env bash
-set -uo pipefail
-
-COMPILE_OK=true
-INCOMPLETE=false
-
-echo "Rewriting src/polish/cursor-sway.ts with threshold and weighted magnitude"
-cat > src/polish/cursor-sway.ts << 'EOF'
 export const MAX_ROTATION = Math.PI / 18;
 export const SPEED_REFERENCE = 1400;
 export const VERTICAL_WEIGHT = 0.65;
@@ -33,25 +25,3 @@ export function computeSwayAngle(
 
   return sign * MAX_ROTATION * effectiveMagnitude * speedFactor;
 }
-EOF
-
-echo "Checking compilation"
-if ! pnpm exec tsc --noEmit 2>&1; then
-  echo "Compilation failed - will skip commit"
-  COMPILE_OK=false
-fi
-
-if [ "$INCOMPLETE" = true ] || [ "$COMPILE_OK" = false ]; then
-  echo "Skipping tests and commit due to incomplete files or compilation errors"
-  exit 1
-fi
-
-echo "Running tests"
-if pnpm exec vitest run 2>&1; then
-  echo "All tests passed. Committing."
-  git add -A
-  git commit -m "fix(polish): sway uses weighted magnitude with threshold for near-dwell motion"
-else
-  echo "Tests failed. Fix errors then run the next script."
-  exit 1
-fi
