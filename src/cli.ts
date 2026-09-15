@@ -3,9 +3,9 @@ import { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Recovoice } from './recovoice.js';
-import { MockTTSProvider } from './tts/providers/mock.js';
+import { createTTSProvider } from './tts/factory.js';
 import { createTauriPlaywrightAdapter } from './recording/tauri-playwright-adapter.js';
-import { createFfmpegCompositor } from './compositor/ffmpeg-compositor.js';
+import { createPolishCompositor } from './compositor/polish-compositor.js';
 
 const pkg = { version: '0.1.0' };
 
@@ -23,7 +23,8 @@ program
   .option('--check', 'Validate the script only; no execution')
   .option('--dry-run', 'Show planned actions without executing')
   .option('--voiceover-only', 'Only regenerate voiceover and captions')
-  .option('--tts <provider>', 'TTS provider (mock|elevenlabs)', 'mock')
+  .option('--tts <provider>', 'TTS provider (mock|kokoro|edge)', 'kokoro')
+  .option('--kokoro-url <url>', 'Kokoro server URL', 'http://localhost:8880')
   .option('--no-polish', 'Disable all polish effects')
   .action(async (scriptPath: string, opts: Record<string, unknown>) => {
     const absoluteScript = resolve(scriptPath);
@@ -32,16 +33,27 @@ program
       process.exit(2);
     }
 
-    const ttsProvider = new MockTTSProvider();
+    const ttsProvider = createTTSProvider({
+      provider: opts.tts as 'mock' | 'kokoro' | 'edge',
+      kokoroUrl: String(opts.kokoroUrl),
+    });
+
     const recordingAdapter = createTauriPlaywrightAdapter();
-    const compositor = createFfmpegCompositor();
 
     const recovoice = new Recovoice({
       script: absoluteScript,
       output: String(opts.output),
       recordingAdapter,
       ttsProvider,
-      compositor,
+      compositorFactory: (result) =>
+        createPolishCompositor({
+          durationMs: estimateDurationMs(result.telemetry),
+          fps: Number(opts.fps),
+          telemetry: result.telemetry,
+          viewport: result.telemetry.viewport,
+          smoothingFactor: 0.3,
+          usePolish: opts.polish !== false,
+        }),
     });
 
     if (opts.check) {
@@ -84,6 +96,12 @@ program
       process.exit(1);
     }
   });
+
+function estimateDurationMs(telemetry: { events: Array<{ t: number }> }): number {
+  if (telemetry.events.length === 0) return 5000;
+  const last = telemetry.events[telemetry.events.length - 1]!;
+  return Math.ceil(last.t + 1000);
+}
 
 program.parseAsync(process.argv).catch((err) => {
   process.stderr.write(`error: ${(err as Error).message}\n`);

@@ -5,6 +5,7 @@ export type {
   RecovoiceOptions,
   RecovoiceResult,
   CheckResult,
+  RecovoiceCompositorResult,
 } from './recovoice.js';
 export {
   cubicBezier,
@@ -119,6 +120,10 @@ export type { StubCall } from './recording/stub-adapter.js';
 export { createTauriPlaywrightAdapter } from './recording/tauri-playwright-adapter.js';
 export { createFfmpegCompositor } from './compositor/ffmpeg-compositor.js';
 export type { FfmpegCompositorOptions } from './compositor/ffmpeg-compositor.js';
+export { createPolishCompositor } from './compositor/polish-compositor.js';
+export type { PolishCompositorOptions } from './compositor/polish-compositor.js';
+export { createTTSProvider } from './tts/factory.js';
+export type { TTSFactoryOptions } from './tts/factory.js';
 export type {
   Script,
   Segment,

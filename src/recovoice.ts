@@ -8,12 +8,20 @@ import type { RecordingAdapter, RecordingSession, Compositor } from './recording
 import type { TTSProvider, CursorTelemetry, WordTiming } from './types/recording.js';
 import type { Script, Segment } from './types/script.js';
 
+export interface RecovoiceCompositorResult {
+  rawVideo: string;
+  voiceovers: Array<{ path: string; startMs: number }>;
+  captionsPath?: string;
+  telemetry: CursorTelemetry;
+}
+
 export interface RecovoiceOptions {
   script: string;
   output?: string;
   recordingAdapter: RecordingAdapter;
   ttsProvider: TTSProvider;
-  compositor: Compositor;
+  compositor?: Compositor;
+  compositorFactory?: (result: RecovoiceCompositorResult) => Compositor;
 }
 
 export interface CheckResult {
@@ -100,11 +108,17 @@ export class Recovoice {
         startMs: v.startMs,
       }));
 
-      await this.opts.compositor.compose({
+      const compositor = this.resolveCompositor({
         rawVideo: video,
         voiceovers: voiceoverInputs,
         captionsPath: existsSync(srtPath) ? srtPath : undefined,
-        polish: undefined,
+        telemetry,
+      });
+
+      await compositor.compose({
+        rawVideo: video,
+        voiceovers: voiceoverInputs,
+        captionsPath: existsSync(srtPath) ? srtPath : undefined,
         output: finalVideoPath,
       });
 
@@ -126,6 +140,14 @@ export class Recovoice {
       }
       throw err;
     }
+  }
+
+  private resolveCompositor(result: RecovoiceCompositorResult): Compositor {
+    if (this.opts.compositor) return this.opts.compositor;
+    if (this.opts.compositorFactory) return this.opts.compositorFactory(result);
+    throw new Error(
+      'Recovoice requires either a `compositor` or `compositorFactory` option',
+    );
   }
 
   private async synthesizeVoiceovers(
