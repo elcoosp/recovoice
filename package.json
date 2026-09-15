@@ -1,6 +1,6 @@
 {
   "name": "recovoice",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.1",
   "description": "Programmatic narrated captioned polished demo recordings from a single declarative file",
   "type": "module",
   "main": "./dist/index.js",
@@ -17,14 +17,16 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "pnpm build"
+    "prepublishOnly": "pnpm build",
+    "release:check": "tsc --noEmit && vitest run"
   },
   "keywords": [
     "demo",

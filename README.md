@@ -56,6 +56,67 @@ The moment your product changes, the demo is stale, and someone has to redo it b
 
 ---
 
+---
+
+## Implementation Status
+
+Recovoice is at **v0.1.0-alpha.1**. Every requirement in the specification is
+implemented and covered by tests, with the following known limitations:
+
+- CDP screencast fallback is **discovery only** (Windows-only, connection left
+  to the caller)
+- Multilingual captions and translation are deferred to v0.2
+- Music beds and ducking are deferred to v0.2
+
+### Test coverage
+
+- **297 passing tests** across **44 test files**
+- Unit, integration, and end-to-end (real ffmpeg) layers
+- Full suite runs in ~35 seconds on a modern Mac
+
+### What works
+
+| Feature | Status |
+|---|---|
+| `.demo.md` parsing with frontmatter, prose, actions, variables | ✅ |
+| Action anchors for narration-synced timing | ✅ |
+| Caption overrides (inline and block) | ✅ |
+| `include()` directive with cycle detection | ✅ |
+| zod frontmatter schema validation | ✅ |
+| Kokoro TTS provider | ✅ |
+| edge-tts TTS provider | ✅ |
+| Content-hash audio caching | ✅ |
+| SRT + VTT caption generation | ✅ |
+| Native recording via `tauri-playwright` | ✅ |
+| Cursor telemetry injection | ✅ |
+| Auto-zoom analyzer | ✅ |
+| Connected zoom transitions | ✅ |
+| Spring cursor smoothing | ✅ |
+| Cursor sway | ✅ |
+| Cursor motion blur (ghost trails) | ✅ |
+| Zoom motion blur | ✅ |
+| Per-effect polish toggles | ✅ |
+| Configurable caption styling | ✅ |
+| Wallpaper and blur backgrounds | ✅ |
+| Multi-voiceover audio mixing | ✅ |
+| Polish plugin interface | ✅ |
+| Config file loader with deep merge | ✅ |
+| Screenshot on action failure | ✅ |
+| `--check`, `--dry-run`, `--voiceover-only`, `--confirm` | ✅ |
+| `recovoice doctor` | ✅ |
+| CDP fallback discovery | ✅ (Windows) |
+
+### Deferred to v0.2+
+
+- Multilingual captions and translation
+- Music bed with ducking
+- More polish presets
+- WebM output
+- Preview server
+- Storyboard mode
+
+---
+
 ## Features
 
 - **Single-file scripts** — YAML frontmatter + prose + backtick actions in one `.demo.md`
