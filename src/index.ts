@@ -40,6 +40,16 @@ export {
   VERTICAL_WEIGHT,
   INTENSITY_SCALE,
 } from './polish/cursor-sway.js';
+export { MockTTSProvider } from './tts/providers/mock.js';
+export type { MockTTSOptions } from './tts/providers/mock.js';
+export { withRetry } from './tts/retry.js';
+export type { RetryOptions } from './tts/retry.js';
+export {
+  generateCues,
+  cuesToSrt,
+  cuesToVtt,
+} from './caption/generator.js';
+export type { CaptionCue, GenerateCuesOptions } from './caption/generator.js';
 export type {
   Script,
   Segment,
