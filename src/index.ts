@@ -1,4 +1,5 @@
-export { parseScript } from './parser/parser.js';
+export { parseScript, parseScriptFromString } from './parser/parser.js';
+export { ParseError } from './parser/errors.js';
 export type {
   Script,
   Segment,
