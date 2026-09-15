@@ -34,6 +34,16 @@ export async function loadConfig(
   if (!isPlainObject(raw)) {
     throw new Error(`Config file must export a plain object: ${path}`);
   }
+
+  const { validateFrontmatter } = await import('../parser/schema.js');
+  const validation = validateFrontmatter(raw);
+  if (!validation.valid) {
+    const issue = validation.issues[0]!;
+    throw new Error(
+      `Invalid config file at "${issue.path}": ${issue.message}`,
+    );
+  }
+
   return { config: raw as Partial<Frontmatter>, path };
 }
 

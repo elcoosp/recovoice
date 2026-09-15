@@ -92,7 +92,7 @@ export class Recovoice {
 
   async check(): Promise<CheckResult> {
     try {
-      parseScript(this.opts.script);
+      await this.loadMergedScript();
       return { valid: true, errors: [] };
     } catch (err) {
       if (err instanceof ParseError) {
