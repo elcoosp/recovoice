@@ -1,5 +1,31 @@
 export { parseScript, parseScriptFromString } from './parser/parser.js';
 export { ParseError } from './parser/errors.js';
+export {
+  cubicBezier,
+  linear,
+  easeConnectedPan,
+  easeOutScreenStudio,
+  easeInOutCubic,
+  easeOutCubic,
+} from './polish/easing.js';
+export type { EasingFunction } from './polish/easing.js';
+export {
+  analyzeZoomRegions,
+  DEFAULT_AUTO_ZOOM_CONFIG,
+} from './polish/auto-zoom.js';
+export type { AutoZoomConfig } from './polish/auto-zoom.js';
+export {
+  findConnectedTransitions,
+  CHAINED_ZOOM_PAN_GAP_MS,
+  CONNECTED_ZOOM_PAN_DURATION_MS,
+} from './polish/connected-transitions.js';
+export {
+  computeCursorGhostCount,
+  computeCursorGhostAlpha,
+  computeZoomBlurRadius,
+  MAX_CURSOR_GHOSTS,
+  MAX_ZOOM_BLUR_PX,
+} from './polish/motion-blur.js';
 export type {
   Script,
   Segment,
