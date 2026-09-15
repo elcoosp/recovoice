@@ -69,6 +69,30 @@ export { analyzePolishing } from './polish/pipeline.js';
 export type { PolishAnalysis } from './polish/pipeline.js';
 export { MockTTSProvider } from './tts/providers/mock.js';
 export type { MockTTSOptions } from './tts/providers/mock.js';
+export {
+  ElevenLabsTTSProvider,
+  approximateTimings,
+} from './tts/providers/elevenlabs.js';
+export type { ElevenLabsOptions } from './tts/providers/elevenlabs.js';
+export {
+  createNapiCanvas,
+  isNapiCanvasAvailable,
+  loadImage,
+} from './compositor/napi-canvas.js';
+export {
+  renderFrame,
+  DEFAULT_CURSOR_STYLE,
+  DEFAULT_FRAME_CONFIG,
+} from './compositor/frame-renderer.js';
+export type {
+  RenderFrameInput,
+  CursorStyle,
+} from './compositor/frame-renderer.js';
+export type {
+  CanvasLike,
+  CanvasRenderingContext2DLike,
+  CanvasGradientLike,
+} from './compositor/canvas-types.js';
 export { withRetry } from './tts/retry.js';
 export type { RetryOptions } from './tts/retry.js';
 export {

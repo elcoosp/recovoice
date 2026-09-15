@@ -58,5 +58,8 @@
     "@srsholmes/tauri-playwright": {
       "optional": true
     }
+  },
+  "optionalDependencies": {
+    "@napi-rs/canvas": "^0.1.65"
   }
 }
