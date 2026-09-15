@@ -72,6 +72,9 @@ export {
   StubCompositor,
 } from './recording/stub-adapter.js';
 export type { StubCall } from './recording/stub-adapter.js';
+export { createTauriPlaywrightAdapter } from './recording/tauri-playwright-adapter.js';
+export { createFfmpegCompositor } from './compositor/ffmpeg-compositor.js';
+export type { FfmpegCompositorOptions } from './compositor/ffmpeg-compositor.js';
 export type {
   Script,
   Segment,
