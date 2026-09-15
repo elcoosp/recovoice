@@ -1,0 +1,61 @@
+{
+  "name": "recovoice",
+  "version": "0.1.0",
+  "description": "Programmatic narrated captioned polished demo recordings from a single declarative file",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "recovoice": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm build"
+  },
+  "keywords": [
+    "demo",
+    "recording",
+    "tauri",
+    "playwright",
+    "voiceover",
+    "captions",
+    "screen-recording"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "commander": "^13.1.0",
+    "js-yaml": "^4.1.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  },
+  "peerDependencies": {
+    "@srsholmes/tauri-playwright": ">=0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@srsholmes/tauri-playwright": {
+      "optional": true
+    }
+  }
+}
