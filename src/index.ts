@@ -1,6 +1,8 @@
 export { parseScript, parseScriptFromString } from './parser/parser.js';
 export { ParseError } from './parser/errors.js';
 export { Recovoice } from './recovoice.js';
+export { runDoctor, formatDoctorReport } from './doctor.js';
+export type { Check, DoctorReport } from './doctor.js';
 export type {
   RecovoiceOptions,
   RecovoiceResult,

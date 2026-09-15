@@ -50,7 +50,6 @@ program
           durationMs: estimateDurationMs(result.telemetry),
           fps: Number(opts.fps),
           telemetry: result.telemetry,
-          viewport: result.telemetry.viewport,
           smoothingFactor: 0.3,
           usePolish: opts.polish !== false,
         }),
@@ -102,6 +101,16 @@ function estimateDurationMs(telemetry: { events: Array<{ t: number }> }): number
   const last = telemetry.events[telemetry.events.length - 1]!;
   return Math.ceil(last.t + 1000);
 }
+
+program
+  .command('doctor')
+  .description('Check that required external tools are installed')
+  .action(async () => {
+    const { runDoctor, formatDoctorReport } = await import('./doctor.js');
+    const report = runDoctor();
+    process.stdout.write(formatDoctorReport(report) + '\n');
+    process.exit(report.allOk ? 0 : 1);
+  });
 
 program.parseAsync(process.argv).catch((err) => {
   process.stderr.write(`error: ${(err as Error).message}\n`);

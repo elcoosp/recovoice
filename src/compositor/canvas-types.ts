@@ -1,3 +1,9 @@
+export interface ImageDataLike {
+  data: Uint8ClampedArray;
+  width: number;
+  height: number;
+}
+
 export interface CanvasLike {
   width: number;
   height: number;
@@ -13,7 +19,13 @@ export interface CanvasRenderingContext2DLike {
   clearRect(x: number, y: number, w: number, h: number): void;
   fillRect(x: number, y: number, w: number, h: number): void;
   strokeRect(x: number, y: number, w: number, h: number): void;
-  drawImage(image: unknown, x: number, y: number, w?: number, h?: number): void;
+  drawImage(
+    image: unknown,
+    x: number,
+    y: number,
+    w?: number,
+    h?: number,
+  ): void;
   beginPath(): void;
   moveTo(x: number, y: number): void;
   lineTo(x: number, y: number): void;
@@ -23,8 +35,23 @@ export interface CanvasRenderingContext2DLike {
   fill(): void;
   stroke(): void;
   clip(): void;
-  createLinearGradient(x0: number, y0: number, x1: number, y1: number): CanvasGradientLike;
-  createRadialGradient(x0: number, y0: number, r0: number, x1: number, y1: number, r1: number): CanvasGradientLike;
+  createLinearGradient(
+    x0: number,
+    y0: number,
+    x1: number,
+    y1: number,
+  ): CanvasGradientLike;
+  createRadialGradient(
+    x0: number,
+    y0: number,
+    r0: number,
+    x1: number,
+    y1: number,
+    r1: number,
+  ): CanvasGradientLike;
+  createImageData?(sw: number, sh: number): ImageDataLike;
+  getImageData?(sx: number, sy: number, sw: number, sh: number): ImageDataLike;
+  putImageData?(imageData: ImageDataLike, dx: number, dy: number): void;
   filter: string;
   globalAlpha: number;
   fillStyle: string | CanvasGradientLike;

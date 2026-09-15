@@ -5,12 +5,19 @@ import type { Compositor, CompositorOptions } from '../recording/types.js';
 import type { CursorTelemetry, PolishConfig } from '../types/recording.js';
 import { analyzePolishing } from '../polish/pipeline.js';
 import { scheduleFrames } from '../polish/frame-scheduler.js';
-import { renderFrame, DEFAULT_CURSOR_STYLE, DEFAULT_FRAME_CONFIG } from './frame-renderer.js';
-import { createNapiCanvas, loadImage, isNapiCanvasAvailable } from './napi-canvas.js';
+import {
+  renderFrame,
+  DEFAULT_CURSOR_STYLE,
+  DEFAULT_FRAME_CONFIG,
+} from './frame-renderer.js';
+import {
+  createNapiCanvas,
+  isNapiCanvasAvailable,
+} from './napi-canvas.js';
+import type { CanvasLike, ImageDataLike } from './canvas-types.js';
 
 export interface PolishCompositorOptions {
   ffmpegPath?: string;
-  viewport?: { width: number; height: number };
   outputSize?: { width: number; height: number };
   durationMs: number;
   fps: number;
@@ -49,6 +56,7 @@ class PolishCompositor implements Compositor {
 
     const shouldPolish = this.opts.usePolish !== false;
     const outputSize = this.opts.outputSize ?? { width: 1920, height: 1080 };
+    const viewport = this.opts.telemetry.viewport;
 
     const analysis = shouldPolish
       ? analyzePolishing(this.opts.telemetry, this.opts.polish ?? {})
@@ -58,7 +66,7 @@ class PolishCompositor implements Compositor {
       scheduleFrames({
         durationMs: this.opts.durationMs,
         fps: this.opts.fps,
-        viewport: this.opts.telemetry.viewport,
+        viewport,
         telemetry: this.opts.telemetry,
         zoomRegions: analysis.zoomRegions,
         transitions: analysis.transitions,
@@ -70,54 +78,111 @@ class PolishCompositor implements Compositor {
       throw new Error('Polish compositor produced zero frames to render');
     }
 
-    const decode = this.startFrameDecoder(opts.rawVideo, outputSize, this.opts.fps);
-    const encode = this.startFrameEncoder(opts, outputSize, this.opts.fps);
+    const decoder = this.startFrameDecoder(
+      opts.rawVideo,
+      viewport,
+      this.opts.fps,
+    );
+    const encoder = this.startFrameEncoder(opts, outputSize, this.opts.fps);
 
     const canvas = createNapiCanvas(outputSize.width, outputSize.height);
+    const scratchCanvas = createNapiCanvas(viewport.width, viewport.height);
+    const scratchCtx = scratchCanvas.getContext('2d');
+    const canvasCtx = canvas.getContext('2d');
+
     const bg = this.opts.polish?.background ?? { type: 'gradient' as const };
-    const frameCfg = { ...DEFAULT_FRAME_CONFIG, ...(this.opts.polish?.frame ?? {}) };
+    const frameCfg = {
+      ...DEFAULT_FRAME_CONFIG,
+      ...(this.opts.polish?.frame ?? {}),
+    };
 
     try {
       for (const schedule of schedules) {
-        const frameBuf = await decode.nextFrame();
+        const frameBuf = await decoder.nextFrame();
         if (!frameBuf) break;
-        const image = await loadImage(frameBuf);
+
+        this.blitRgbaToCanvas(
+          scratchCanvas,
+          scratchCtx,
+          frameBuf,
+          viewport.width,
+          viewport.height,
+        );
+
         renderFrame(canvas, {
-          video: image,
-          videoWidth: this.opts.telemetry.viewport.width,
-          videoHeight: this.opts.telemetry.viewport.height,
+          video: scratchCanvas,
+          videoWidth: viewport.width,
+          videoHeight: viewport.height,
           camera: schedule.camera,
           cursor: schedule.cursor,
           background: bg,
           frame: frameCfg,
           cursorStyle: DEFAULT_CURSOR_STYLE,
         });
-        const raw = await (canvas as unknown as { encode: (fmt: string) => Promise<Buffer> }).encode('raw');
-        await encode.writeFrame(raw);
+
+        const rgba = this.readRgbaFromCanvas(
+          canvasCtx,
+          outputSize.width,
+          outputSize.height,
+        );
+        await encoder.writeFrame(rgba);
       }
-      await encode.finish();
-      decode.close();
+      await encoder.finish();
+      decoder.close();
     } catch (err) {
-      decode.close();
-      encode.kill();
+      decoder.close();
+      encoder.kill();
       throw err;
     }
   }
 
+  private blitRgbaToCanvas(
+    _canvas: CanvasLike,
+    ctx: ReturnType<CanvasLike['getContext']>,
+    rgba: Buffer,
+    width: number,
+    height: number,
+  ): void {
+    if (!ctx.createImageData || !ctx.putImageData) {
+      throw new Error(
+        'Canvas context does not support createImageData/putImageData',
+      );
+    }
+    const imageData = ctx.createImageData(width, height);
+    imageData.data.set(new Uint8ClampedArray(rgba));
+    ctx.putImageData(imageData, 0, 0);
+  }
+
+  private readRgbaFromCanvas(
+    ctx: ReturnType<CanvasLike['getContext']>,
+    width: number,
+    height: number,
+  ): Buffer {
+    if (!ctx.getImageData) {
+      throw new Error('Canvas context does not support getImageData');
+    }
+    const imageData = ctx.getImageData(0, 0, width, height);
+    return Buffer.from(imageData.data);
+  }
+
   private startFrameDecoder(
     inputPath: string,
-    size: { width: number; height: number },
+    viewport: { width: number; height: number },
     fps: number,
   ): { nextFrame: () => Promise<Buffer | null>; close: () => void } {
-    const proc = spawn(this.ffmpegPath, [
-      '-i', inputPath,
-      '-vf', `scale=${size.width}:${size.height},fps=${fps}`,
-      '-f', 'rawvideo',
-      '-pix_fmt', 'rgba',
-      '-',
-    ], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const proc = spawn(
+      this.ffmpegPath,
+      [
+        '-i', inputPath,
+        '-vf', `scale=${viewport.width}:${viewport.height},fps=${fps}`,
+        '-f', 'rawvideo',
+        '-pix_fmt', 'rgba',
+        '-',
+      ],
+      { stdio: ['ignore', 'pipe', 'ignore'] },
+    );
 
-    const frameSize = size.width * size.height * 4;
+    const frameSize = viewport.width * viewport.height * 4;
     let buffer = Buffer.alloc(0);
     let ended = false;
     const waiters: Array<(b: Buffer | null) => void> = [];
@@ -160,7 +225,11 @@ class PolishCompositor implements Compositor {
     opts: CompositorOptions,
     size: { width: number; height: number },
     fps: number,
-  ): { writeFrame: (buf: Buffer) => Promise<void>; finish: () => Promise<void>; kill: () => void } {
+  ): {
+    writeFrame: (buf: Buffer) => Promise<void>;
+    finish: () => Promise<void>;
+    kill: () => void;
+  } {
     const args: string[] = [
       '-y',
       '-f', 'rawvideo',
@@ -177,7 +246,9 @@ class PolishCompositor implements Compositor {
     }
 
     if (opts.captionsPath && existsSync(opts.captionsPath)) {
-      const escaped = opts.captionsPath.replace(/\\/g, '\\\\').replace(/:/g, '\\:');
+      const escaped = opts.captionsPath
+        .replace(/\\/g, '\\\\')
+        .replace(/:/g, '\\:');
       args.push(
         '-vf',
         `subtitles='${escaped}':force_style='FontName=Inter,FontSize=22,PrimaryColour=&HFFFFFF,BackColour=&HB3000000,BorderStyle=4'`,
@@ -194,7 +265,9 @@ class PolishCompositor implements Compositor {
 
     args.push(opts.output);
 
-    const proc = spawn(this.ffmpegPath, args, { stdio: ['pipe', 'ignore', 'inherit'] });
+    const proc = spawn(this.ffmpegPath, args, {
+      stdio: ['pipe', 'ignore', 'inherit'],
+    });
 
     return {
       writeFrame(buf: Buffer): Promise<void> {
@@ -221,3 +294,5 @@ class PolishCompositor implements Compositor {
     };
   }
 }
+
+export type { ImageDataLike };

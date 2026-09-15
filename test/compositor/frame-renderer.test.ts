@@ -141,8 +141,6 @@ describe('renderFrame', () => {
       frame: DEFAULT_FRAME_CONFIG,
       cursorStyle: DEFAULT_CURSOR_STYLE,
     });
-    // No rotate should be called for the cursor; camera scale at 1 means
-    // scale(1,1) is called, but rotate should not be.
     const rotateCalls = calls.filter((c) => c.method === 'rotate');
     expect(rotateCalls).toHaveLength(0);
   });
@@ -162,7 +160,7 @@ describe('renderFrame', () => {
     expect(rotateCalls.length).toBeGreaterThan(0);
   });
 
-  it('applies camera scale to the video frame', () => {
+  it('applies base scale times camera scale to the video frame', () => {
     renderFrame(canvas, {
       video: {},
       videoWidth: 1280,
@@ -173,8 +171,12 @@ describe('renderFrame', () => {
       frame: DEFAULT_FRAME_CONFIG,
       cursorStyle: DEFAULT_CURSOR_STYLE,
     });
+    // baseScale for canvas 1920x1080 with padding 60 -> content 1800x960.
+    // video aspect 1280/800 = 1.6; content aspect 1800/960 = 1.875.
+    // Video is narrower -> contain: baseScale = 960 / 800 = 1.2.
+    // Total scale = 1.2 * 1.5 = 1.8.
     const scaleCalls = calls.filter((c) => c.method === 'scale');
-    expect(scaleCalls.some((c) => c.args[0] === 1.5)).toBe(true);
+    expect(scaleCalls.some((c) => Math.abs((c.args[0] as number) - 1.8) < 1e-6)).toBe(true);
   });
 
   it('draws ghost trails when ghostCount is greater than zero', () => {
@@ -188,7 +190,6 @@ describe('renderFrame', () => {
       frame: DEFAULT_FRAME_CONFIG,
       cursorStyle: DEFAULT_CURSOR_STYLE,
     });
-    // Ghosts add extra save/restore cycles
     const saveCalls = calls.filter((c) => c.method === 'save');
     expect(saveCalls.length).toBeGreaterThan(3);
   });
@@ -205,6 +206,7 @@ describe('renderFrame', () => {
       cursorStyle: DEFAULT_CURSOR_STYLE,
     });
     const scaleCalls = calls.filter((c) => c.method === 'scale');
-    expect(scaleCalls.some((c) => (c.args[0] as number) > 1.05)).toBe(true);
+    // The pulse scale 1 + 0.8*0.15 = 1.12 should appear
+    expect(scaleCalls.some((c) => (c.args[0] as number) > 1.11 && (c.args[0] as number) < 1.13)).toBe(true);
   });
 });
