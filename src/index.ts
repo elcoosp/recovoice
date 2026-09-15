@@ -69,11 +69,10 @@ export { analyzePolishing } from './polish/pipeline.js';
 export type { PolishAnalysis } from './polish/pipeline.js';
 export { MockTTSProvider } from './tts/providers/mock.js';
 export type { MockTTSOptions } from './tts/providers/mock.js';
-export {
-  ElevenLabsTTSProvider,
-  approximateTimings,
-} from './tts/providers/elevenlabs.js';
-export type { ElevenLabsOptions } from './tts/providers/elevenlabs.js';
+export { KokoroTTSProvider } from './tts/providers/kokoro.js';
+export type { KokoroOptions } from './tts/providers/kokoro.js';
+export { EdgeTTSProvider } from './tts/providers/edge.js';
+export type { EdgeTTSOptions } from './tts/providers/edge.js';
 export {
   createNapiCanvas,
   isNapiCanvasAvailable,
