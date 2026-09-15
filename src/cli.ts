@@ -22,7 +22,7 @@ program
   .option('--fps <number>', 'Recording frame rate', '60')
   .option('--check', 'Validate the script only; no execution')
   .option('--dry-run', 'Show planned actions without executing')
-  .option('--voiceover-only', 'Only regenerate voiceover and captions')
+  .option('--voiceover-only', 'Only regenerate voiceover and captions (skip recording)')
   .option('--tts <provider>', 'TTS provider (mock|kokoro|edge)', 'kokoro')
   .option('--kokoro-url <url>', 'Kokoro server URL', 'http://localhost:8880')
   .option('--no-polish', 'Disable all polish effects')
@@ -45,9 +45,10 @@ program
       output: String(opts.output),
       recordingAdapter,
       ttsProvider,
+      voiceoverOnly: Boolean(opts.voiceoverOnly),
       compositorFactory: (result) =>
         createPolishCompositor({
-          durationMs: estimateDurationMs(result.telemetry),
+          durationMs: result.durationMs,
           fps: Number(opts.fps),
           telemetry: result.telemetry,
           smoothingFactor: 0.3,
@@ -95,12 +96,6 @@ program
       process.exit(1);
     }
   });
-
-function estimateDurationMs(telemetry: { events: Array<{ t: number }> }): number {
-  if (telemetry.events.length === 0) return 5000;
-  const last = telemetry.events[telemetry.events.length - 1]!;
-  return Math.ceil(last.t + 1000);
-}
 
 program
   .command('doctor')

@@ -13,6 +13,7 @@ export interface RecovoiceCompositorResult {
   voiceovers: Array<{ path: string; startMs: number }>;
   captionsPath?: string;
   telemetry: CursorTelemetry;
+  durationMs: number;
 }
 
 export interface RecovoiceOptions {
@@ -22,6 +23,7 @@ export interface RecovoiceOptions {
   ttsProvider: TTSProvider;
   compositor?: Compositor;
   compositorFactory?: (result: RecovoiceCompositorResult) => Compositor;
+  voiceoverOnly?: boolean;
 }
 
 export interface CheckResult {
@@ -35,6 +37,7 @@ export interface RecovoiceResult {
   captions: { srt?: string; vtt?: string };
   voiceovers: string[];
   telemetry: CursorTelemetry;
+  durationMs: number;
 }
 
 const DEFAULT_FPS = 60;
@@ -88,6 +91,25 @@ export class Recovoice {
         cacheDir,
       );
 
+      const captions = this.writeCaptions(script, allTimings, srtPath, vttPath);
+
+      if (this.opts.voiceoverOnly) {
+        // Publish assets and captions without recording or compositing.
+        this.publishStaging(stagingDir, outputDir, rawVideoPath);
+        return {
+          finalVideo: '',
+          rawVideo: '',
+          captions,
+          voiceovers: voiceovers.map((v) => v.path),
+          telemetry: {
+            events: [],
+            timebaseOrigin: 0,
+            viewport: script.frontmatter.viewport ?? DEFAULT_VIEWPORT,
+          },
+          durationMs: 0,
+        };
+      }
+
       const session = await this.opts.recordingAdapter.launch({
         viewport: script.frontmatter.viewport ?? DEFAULT_VIEWPORT,
       });
@@ -101,18 +123,19 @@ export class Recovoice {
       const telemetry = await session.collectTelemetry();
       await session.close();
 
-      const captions = this.writeCaptions(script, allTimings, srtPath, vttPath);
-
       const voiceoverInputs = voiceovers.map((v) => ({
         path: v.path,
         startMs: v.startMs,
       }));
+
+      const durationMs = await this.resolveDurationMs(video, telemetry);
 
       const compositor = this.resolveCompositor({
         rawVideo: video,
         voiceovers: voiceoverInputs,
         captionsPath: existsSync(srtPath) ? srtPath : undefined,
         telemetry,
+        durationMs,
       });
 
       await compositor.compose({
@@ -131,6 +154,7 @@ export class Recovoice {
         captions,
         voiceovers: voiceovers.map((v) => v.path),
         telemetry,
+        durationMs,
       };
       return result;
     } catch (err) {
@@ -140,6 +164,25 @@ export class Recovoice {
       }
       throw err;
     }
+  }
+
+  private async resolveDurationMs(
+    videoPath: string,
+    telemetry: CursorTelemetry,
+  ): Promise<number> {
+    // Try ffprobe first; fall back to last telemetry event + buffer
+    try {
+      const { probeVideo } = await import('./util/ffprobe.js');
+      const probe = await probeVideo(videoPath);
+      if (probe.durationMs > 0) return probe.durationMs;
+    } catch {
+      // ignore probe failure and fall back
+    }
+    if (telemetry.events.length > 0) {
+      const last = telemetry.events[telemetry.events.length - 1]!;
+      return Math.ceil(last.t + 1000);
+    }
+    return 5000;
   }
 
   private resolveCompositor(result: RecovoiceCompositorResult): Compositor {

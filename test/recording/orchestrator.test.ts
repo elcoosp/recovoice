@@ -231,6 +231,29 @@ describe('Recovoice.run', () => {
   });
 });
 
+describe('Recovoice.run with voiceoverOnly', () => {
+  it('skips recording and produces only voiceover and captions', async () => {
+    const adapter = new StubRecordingAdapter({
+      rawVideoPath: join(workDir, 'raw.mp4'),
+    });
+    const recovoice = new Recovoice({
+      script: scriptPath,
+      output: outputDir,
+      recordingAdapter: adapter,
+      ttsProvider: new MockTTSProvider(),
+      compositor: new StubCompositor(),
+      voiceoverOnly: true,
+    });
+    const result = await recovoice.run();
+    expect(adapter.sessions).toHaveLength(0);
+    expect(result.finalVideo).toBe('');
+    expect(result.rawVideo).toBe('');
+    expect(result.durationMs).toBe(0);
+    expect(result.voiceovers.length).toBeGreaterThan(0);
+    expect(existsSync(join(outputDir, 'captions.srt'))).toBe(true);
+  });
+});
+
 describe('Recovoice options', () => {
   it('uses default fps of 60 when not specified', async () => {
     writeFileSync(

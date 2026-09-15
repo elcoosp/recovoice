@@ -3,6 +3,8 @@ export { ParseError } from './parser/errors.js';
 export { Recovoice } from './recovoice.js';
 export { runDoctor, formatDoctorReport } from './doctor.js';
 export type { Check, DoctorReport } from './doctor.js';
+export { probeVideo } from './util/ffprobe.js';
+export type { ProbeResult, ProbeOptions } from './util/ffprobe.js';
 export type {
   RecovoiceOptions,
   RecovoiceResult,
