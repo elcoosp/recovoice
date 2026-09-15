@@ -58,8 +58,13 @@ export function computeCameraState(
 
 function computeActiveScale(region: ZoomRegion, tMs: number): number {
   const elapsed = tMs - region.startMs;
-  if (elapsed >= ZOOM_IN_DURATION_MS) return region.depth;
-  const t = elapsed / ZOOM_IN_DURATION_MS;
+  const regionDuration = region.endMs - region.startMs;
+  const zoomInDuration = Math.min(
+    ZOOM_IN_DURATION_MS,
+    Math.max(1, regionDuration / 2),
+  );
+  if (elapsed >= zoomInDuration) return region.depth;
+  const t = elapsed / zoomInDuration;
   const progress = easeInOutCubic(t);
   return 1 + (region.depth - 1) * progress;
 }

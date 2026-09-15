@@ -60,6 +60,13 @@ export type {
   CursorFrameState,
   CursorStateOptions,
 } from './polish/cursor-state.js';
+export { scheduleFrames } from './polish/frame-scheduler.js';
+export type {
+  ScheduleInput,
+  FrameSchedule,
+} from './polish/frame-scheduler.js';
+export { analyzePolishing } from './polish/pipeline.js';
+export type { PolishAnalysis } from './polish/pipeline.js';
 export { MockTTSProvider } from './tts/providers/mock.js';
 export type { MockTTSOptions } from './tts/providers/mock.js';
 export { withRetry } from './tts/retry.js';
