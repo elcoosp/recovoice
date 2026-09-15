@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { dirname, isAbsolute, resolve } from 'node:path';
 import { load as loadYaml } from 'js-yaml';
 import { ParseError } from './errors.js';
 import type {
@@ -11,32 +12,55 @@ import type {
 } from '../types/script.js';
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/;
-const ACTION_LINE_RE = /^\s*`(.+)`\s*$/;
+const ACTION_LINE_RE = /^(\s*)`(.+)`\s*$/;
 const ACTION_CALL_RE = /^([A-Za-z_$][A-Za-z0-9_$]*)\s*\((.*)\)\s*$/s;
 const INLINE_CAPTION_RE = /\{\{caption:\s*([\s\S]+?)\}\}/;
 const VARIABLE_RE = /\{\{(\w+)\}\}/g;
+const INCLUDE_RE = /^\s*include\(\s*["'](.+?)["']\s*\)\s*$/;
 const CAPTION_BLOCK_START = '::: caption';
 const CAPTION_BLOCK_END = ':::';
+const WORD_RE = /\S+/g;
 
 export function parseScript(filePath: string): Script {
-  let content: string;
-  try {
-    content = readFileSync(filePath, 'utf-8');
-  } catch (err) {
-    throw new ParseError(
-      `Cannot read script file: ${filePath} (${(err as Error).message})`,
-    );
-  }
-  return parseScriptFromString(content, filePath);
+  return parseScriptInternal(filePath, new Set());
 }
 
 export function parseScriptFromString(
   content: string,
   filePath: string,
 ): Script {
+  return parseScriptFromStringInternal(content, filePath, new Set());
+}
+
+function parseScriptInternal(filePath: string, visited: Set<string>): Script {
+  const absolute = isAbsolute(filePath) ? filePath : resolve(filePath);
+  if (visited.has(absolute)) {
+    throw new ParseError(
+      `Circular include detected: ${absolute}`,
+    );
+  }
+  visited.add(absolute);
+
+  let content: string;
+  try {
+    content = readFileSync(absolute, 'utf-8');
+  } catch (err) {
+    throw new ParseError(
+      `Cannot read script file: ${absolute} (${(err as Error).message})`,
+    );
+  }
+  return parseScriptFromStringInternal(content, absolute, visited, dirname(absolute));
+}
+
+function parseScriptFromStringInternal(
+  content: string,
+  filePath: string,
+  visited: Set<string>,
+  baseDir?: string,
+): Script {
   const { frontmatter, body } = extractFrontmatter(content);
   const variables = frontmatter.variables ?? {};
-  const segments = parseSegments(body, variables);
+  const segments = parseSegments(body, variables, visited, baseDir ?? process.cwd());
   return { frontmatter, segments, filePath };
 }
 
@@ -54,35 +78,43 @@ function extractFrontmatter(content: string): ExtractedFrontmatter {
   try {
     parsed = loadYaml(match[1] ?? '');
   } catch (err) {
-    throw new ParseError(
-      `Invalid frontmatter YAML: ${(err as Error).message}`,
-    );
+    throw new ParseError(`Invalid frontmatter YAML: ${(err as Error).message}`);
   }
   const frontmatter = (parsed ?? {}) as Frontmatter;
   const body = content.slice(match[0].length);
   return { frontmatter, body };
 }
 
-function parseSegments(body: string, variables: VariableMap): Segment[] {
+interface ProseToken {
+  kind: 'prose';
+  text: string;
+}
+
+interface ActionToken {
+  kind: 'action';
+  action: Action;
+}
+
+type Token = ProseToken | ActionToken;
+
+function parseSegments(
+  body: string,
+  variables: VariableMap,
+  visited: Set<string>,
+  baseDir: string,
+): Segment[] {
   const lines = body.split(/\r?\n/);
   const segments: Segment[] = [];
 
-  let pendingActions: Action[] = [];
-  let pendingProse: string[] = [];
+  let pendingTokens: Token[] = [];
   let pendingSourceLine = 0;
 
   const flush = (): void => {
-    if (pendingProse.length === 0 && pendingActions.length === 0) return;
+    if (pendingTokens.length === 0) return;
     segments.push(
-      buildSegment(
-        pendingActions,
-        pendingProse,
-        variables,
-        pendingSourceLine,
-      ),
+      buildSegment(pendingTokens, variables, pendingSourceLine),
     );
-    pendingActions = [];
-    pendingProse = [];
+    pendingTokens = [];
     pendingSourceLine = 0;
   };
 
@@ -103,8 +135,7 @@ function parseSegments(body: string, variables: VariableMap): Segment[] {
       if (i >= lines.length) {
         throw new ParseError('Unterminated ::: caption block', lineNum);
       }
-      i++; // consume closing :::
-
+      i++;
       if (segments.length === 0) {
         throw new ParseError(
           'Caption block has no preceding segment to attach to',
@@ -124,14 +155,30 @@ function parseSegments(body: string, variables: VariableMap): Segment[] {
       continue;
     }
 
+    const includeMatch = rawLine.match(INCLUDE_RE);
+    if (includeMatch) {
+      flush();
+      const includePath = includeMatch[1]!;
+      const absoluteInclude = isAbsolute(includePath)
+        ? includePath
+        : resolve(baseDir, includePath);
+      const includedScript = parseScriptInternal(absoluteInclude, visited);
+      for (const seg of includedScript.segments) {
+        segments.push(seg);
+      }
+      i++;
+      continue;
+    }
+
     const actionMatch = rawLine.match(ACTION_LINE_RE);
     if (actionMatch) {
-      if (pendingActions.length === 0 && pendingProse.length === 0) {
-        pendingSourceLine = lineNum;
-      }
-      pendingActions.push(
-        parseActionLine(actionMatch[1]!, lineNum, variables),
-      );
+      const indent = actionMatch[1]!;
+      const column = indent.length + 1;
+      if (pendingTokens.length === 0) pendingSourceLine = lineNum;
+      pendingTokens.push({
+        kind: 'action',
+        action: parseActionLine(actionMatch[2]!, lineNum, column, variables),
+      });
       i++;
       continue;
     }
@@ -142,10 +189,8 @@ function parseSegments(body: string, variables: VariableMap): Segment[] {
       continue;
     }
 
-    if (pendingProse.length === 0 && pendingActions.length === 0) {
-      pendingSourceLine = lineNum;
-    }
-    pendingProse.push(rawLine);
+    if (pendingTokens.length === 0) pendingSourceLine = lineNum;
+    pendingTokens.push({ kind: 'prose', text: rawLine });
     i++;
   }
 
@@ -154,25 +199,46 @@ function parseSegments(body: string, variables: VariableMap): Segment[] {
 }
 
 function buildSegment(
-  actions: Action[],
-  proseLines: string[],
+  tokens: Token[],
   variables: VariableMap,
   sourceLine: number,
 ): Segment {
-  const rawProse = proseLines.join('\n').trim();
+  const prosePieces: string[] = [];
+  const actions: Action[] = [];
+  const actionAnchors: number[] = [];
+  let wordCount = 0;
+
+  for (const token of tokens) {
+    if (token.kind === 'prose') {
+      prosePieces.push(token.text);
+      wordCount += countWords(token.text);
+    } else {
+      actions.push(token.action);
+      actionAnchors.push(wordCount);
+    }
+  }
+
+  const rawProse = prosePieces.join('\n').trim();
   const { prose, captionOverride } = extractInlineCaption(
     rawProse,
     variables,
     sourceLine,
   );
+
   const segment: Segment = {
     prose,
     actions,
+    actionAnchors,
     sourceLine,
     silent: prose.trim() === '' && actions.length > 0,
   };
   if (captionOverride) segment.captionOverride = captionOverride;
   return segment;
+}
+
+function countWords(text: string): number {
+  const matches = text.match(WORD_RE);
+  return matches ? matches.length : 0;
 }
 
 interface InlineCaptionResult {
@@ -187,9 +253,7 @@ function extractInlineCaption(
 ): InlineCaptionResult {
   const match = rawProse.match(INLINE_CAPTION_RE);
   if (!match) {
-    return {
-      prose: substituteVariables(rawProse, variables, sourceLine),
-    };
+    return { prose: substituteVariables(rawProse, variables, sourceLine) };
   }
   const captionText = (match[1] ?? '').trim();
   const proseWithoutCaption = rawProse.replace(INLINE_CAPTION_RE, '').trim();
@@ -218,12 +282,13 @@ function substituteVariables(
 function parseActionLine(
   rawCall: string,
   lineNum: number,
+  column: number,
   variables: VariableMap,
 ): Action {
   const call = rawCall.trim();
   const match = call.match(ACTION_CALL_RE);
   if (!match) {
-    throw new ParseError(`Malformed action: \`${rawCall}\``, lineNum);
+    throw new ParseError(`Malformed action: \`${rawCall}\``, lineNum, column);
   }
   const name = match[1]!;
   const argsString = (match[2] ?? '').trim();
@@ -235,6 +300,7 @@ function parseActionLine(
     throw new ParseError(
       `Invalid arguments in action "${name}": ${(err as Error).message}`,
       lineNum,
+      column,
     );
   }
   return { name, args, sourceLine: lineNum };

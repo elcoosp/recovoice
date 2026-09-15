@@ -3,9 +3,16 @@ export class ParseError extends Error {
   readonly column?: number;
 
   constructor(message: string, line?: number, column?: number) {
-    super(line !== undefined ? `${message} (line ${line})` : message);
+    const location = formatLocation(line, column);
+    super(location ? `${message} (${location})` : message);
     this.name = 'ParseError';
     if (line !== undefined) this.line = line;
     if (column !== undefined) this.column = column;
   }
+}
+
+function formatLocation(line?: number, column?: number): string {
+  if (line === undefined) return '';
+  if (column === undefined) return `line ${line}`;
+  return `line ${line}, column ${column}`;
 }

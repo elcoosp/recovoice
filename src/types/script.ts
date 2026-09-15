@@ -45,6 +45,7 @@ export interface CaptionOverride {
 export interface Segment {
   prose: string;
   actions: Action[];
+  actionAnchors: number[];
   captionOverride?: CaptionOverride;
   sourceLine: number;
   silent: boolean;
