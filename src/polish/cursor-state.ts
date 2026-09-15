@@ -20,6 +20,10 @@ export interface CursorStateOptions {
   disableMotionBlur?: boolean;
   /** When true, disables click pulse. */
   disableClickPulse?: boolean;
+  /**
+   * When true, uses raw cursor positions without spring smoothing.
+   */
+  disableSmoothing?: boolean;
 }
 
 const CLICK_PULSE_DURATION_MS = 250;
@@ -42,6 +46,7 @@ export class CursorStateComputer {
       disableSway: options.disableSway ?? false,
       disableMotionBlur: options.disableMotionBlur ?? false,
       disableClickPulse: options.disableClickPulse ?? false,
+      disableSmoothing: options.disableSmoothing ?? false,
     };
     const config = springConfigFromSmoothingFactor(this.opts.smoothingFactor);
     this.springX = new Spring1D(config, 0);
@@ -65,6 +70,39 @@ export class CursorStateComputer {
     }
 
     const latest = before[before.length - 1]!;
+
+    if (this.opts.disableSmoothing) {
+      const rawX = latest.x;
+      const rawY = latest.y;
+      const dtRaw = Math.max(1e-6, (tMs - this.lastT) / 1000);
+      const velX = (rawX - this.lastX) / dtRaw;
+      const velY = (rawY - this.lastY) / dtRaw;
+      const rawSpeed = Math.sqrt(velX * velX + velY * velY);
+
+      const rotation = this.opts.disableSway
+        ? 0
+        : computeSwayAngle(velX, velY);
+      const ghostCount = this.opts.disableMotionBlur
+        ? 0
+        : computeCursorGhostCount(rawSpeed);
+      const clickPulse = this.opts.disableClickPulse
+        ? 0
+        : this.computeClickPulse(tMs);
+
+      this.lastX = rawX;
+      this.lastY = rawY;
+      this.lastT = tMs;
+
+      return {
+        visible: true,
+        x: rawX,
+        y: rawY,
+        rotation,
+        ghostCount,
+        clickPulse,
+      };
+    }
+
     this.springX.setTarget(latest.x);
     this.springY.setTarget(latest.y);
 

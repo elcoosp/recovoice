@@ -18,6 +18,7 @@ export interface ScheduleInput {
   disableCursorMotionBlur?: boolean;
   disableClickPulse?: boolean;
   disableZoomMotionBlur?: boolean;
+  disableSmoothing?: boolean;
 }
 
 export interface FrameSchedule {
@@ -47,10 +48,12 @@ export function* scheduleFrames(input: ScheduleInput): Generator<FrameSchedule> 
     disableSway?: boolean;
     disableMotionBlur?: boolean;
     disableClickPulse?: boolean;
+    disableSmoothing?: boolean;
   } = { smoothingFactor };
   if (input.disableSway) cursorOptions.disableSway = true;
   if (input.disableCursorMotionBlur) cursorOptions.disableMotionBlur = true;
   if (input.disableClickPulse) cursorOptions.disableClickPulse = true;
+  if (input.disableSmoothing) cursorOptions.disableSmoothing = true;
 
   const cursorComputer = new CursorStateComputer(telemetry, cursorOptions);
 

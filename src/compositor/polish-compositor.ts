@@ -100,6 +100,8 @@ class PolishCompositor implements Compositor {
       scheduleInput.disableCursorMotionBlur = true;
     if (polish.zoomMotionBlur === false)
       scheduleInput.disableZoomMotionBlur = true;
+    if (polish.cursorSmoothing === false)
+      scheduleInput.disableSmoothing = true;
 
     const schedules = Array.from(scheduleFrames(scheduleInput));
 
