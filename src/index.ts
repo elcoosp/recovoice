@@ -101,10 +101,20 @@ export { withRetry } from './tts/retry.js';
 export type { RetryOptions } from './tts/retry.js';
 export {
   generateCues,
+  generateCuesFromSegments,
   cuesToSrt,
   cuesToVtt,
 } from './caption/generator.js';
-export type { CaptionCue, GenerateCuesOptions } from './caption/generator.js';
+export type {
+  CaptionCue,
+  GenerateCuesOptions,
+  SegmentCaptionInput,
+} from './caption/generator.js';
+export { mixVoiceovers } from './compositor/audio-mixer.js';
+export type {
+  VoiceoverInput,
+  MixOptions,
+} from './compositor/audio-mixer.js';
 export {
   AudioCache,
   hashSynthesisInput,

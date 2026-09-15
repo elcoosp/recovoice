@@ -42,8 +42,12 @@ class FfmpegCompositor implements Compositor {
   private buildArgs(opts: CompositorOptions): string[] {
     const args: string[] = ['-y', '-i', opts.rawVideo];
 
-    // Audio mixing: overlay voiceovers sequentially starting at their offsets
-    if (opts.voiceovers.length > 0) {
+    const hasAudio = opts.audioTrackPath
+      ? true
+      : opts.voiceovers.length > 0;
+    if (opts.audioTrackPath) {
+      args.push('-i', opts.audioTrackPath);
+    } else if (opts.voiceovers.length > 0) {
       for (const vo of opts.voiceovers) {
         args.push('-i', vo.path);
       }
@@ -61,7 +65,7 @@ class FfmpegCompositor implements Compositor {
       args.push('-vf', videoFilters.join(','));
     }
 
-    if (opts.voiceovers.length > 0) {
+    if (hasAudio) {
       args.push('-map', '0:v');
       args.push('-map', '1:a');
       args.push('-c:v', 'libx264');

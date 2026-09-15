@@ -16,6 +16,12 @@ export interface RecordingAdapter {
 export interface CompositorOptions {
   rawVideo: string;
   voiceovers: Array<{ path: string; startMs: number }>;
+  /**
+   * Optional pre-mixed audio track (single file). When present, the compositor
+   * uses this as the single audio input rather than mixing the individual
+   * voiceovers itself.
+   */
+  audioTrackPath?: string;
   captionsPath?: string;
   polish?: unknown;
   output: string;

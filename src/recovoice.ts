@@ -3,7 +3,8 @@ import { join } from 'node:path';
 import { parseScript } from './parser/parser.js';
 import { ParseError } from './parser/errors.js';
 import { AudioCache, hashSynthesisInput } from './cache/audio-cache.js';
-import { generateCues, cuesToSrt, cuesToVtt } from './caption/generator.js';
+import * as captionModule from './caption/generator.js';
+import { cuesToSrt, cuesToVtt } from './caption/generator.js';
 import type { RecordingAdapter, RecordingSession, Compositor } from './recording/types.js';
 import type {
   TTSProvider,
@@ -91,13 +92,20 @@ export class Recovoice {
       mkdirSync(assetsDir, { recursive: true });
       mkdirSync(cacheDir, { recursive: true });
 
-      const { voiceovers, allTimings } = await this.synthesizeVoiceovers(
-        script,
-        assetsDir,
-        cacheDir,
-      );
+      const {
+        voiceovers,
+        perSegmentTimings,
+        segmentStarts,
+        totalDurationMs,
+      } = await this.synthesizeVoiceovers(script, assetsDir, cacheDir);
 
-      const captions = this.writeCaptions(script, allTimings, srtPath, vttPath);
+      const captions = this.writeCaptions(
+        script,
+        perSegmentTimings,
+        segmentStarts,
+        srtPath,
+        vttPath,
+      );
 
       if (this.opts.voiceoverOnly) {
         // Publish assets and captions without recording or compositing.
@@ -123,7 +131,11 @@ export class Recovoice {
       const fps = script.frontmatter.fps ?? DEFAULT_FPS;
       await session.startRecording({ path: rawDir, fps });
 
-      await this.executeTimedActions(session, script, allTimings);
+      const flatTimings = perSegmentTimings.reduce<WordTiming[]>(
+        (acc, seg) => acc.concat(seg),
+        [],
+      );
+      await this.executeTimedActions(session, script, flatTimings);
 
       const { video } = await session.stopRecording();
       const telemetry = await session.collectTelemetry();
@@ -136,6 +148,16 @@ export class Recovoice {
 
       const durationMs = await this.resolveDurationMs(video, telemetry);
 
+      // Pre-mix voiceovers into a single audio track
+      let audioTrackPath: string | undefined;
+      if (voiceoverInputs.length > 0) {
+        const { mixVoiceovers } = await import('./compositor/audio-mixer.js');
+        audioTrackPath = join(stagingDir, 'mixed-audio.m4a');
+        await mixVoiceovers(voiceoverInputs, audioTrackPath, {
+          totalDurationMs: Math.max(durationMs, totalDurationMs),
+        });
+      }
+
       const compositor = this.resolveCompositor({
         rawVideo: video,
         voiceovers: voiceoverInputs,
@@ -144,12 +166,21 @@ export class Recovoice {
         durationMs,
       });
 
-      await compositor.compose({
+      const composeOptions: {
+        rawVideo: string;
+        voiceovers: typeof voiceoverInputs;
+        captionsPath?: string;
+        audioTrackPath?: string;
+        output: string;
+      } = {
         rawVideo: video,
         voiceovers: voiceoverInputs,
-        captionsPath: existsSync(srtPath) ? srtPath : undefined,
         output: finalVideoPath,
-      });
+      };
+      if (existsSync(srtPath)) composeOptions.captionsPath = srtPath;
+      if (audioTrackPath) composeOptions.audioTrackPath = audioTrackPath;
+
+      await compositor.compose(composeOptions);
 
       // Atomic publish: move staged raw + assets into final location
       this.publishStaging(stagingDir, outputDir, rawVideoPath);
@@ -206,6 +237,9 @@ export class Recovoice {
   ): Promise<{
     voiceovers: Array<{ path: string; startMs: number }>;
     allTimings: WordTiming[];
+    perSegmentTimings: WordTiming[][];
+    segmentStarts: number[];
+    totalDurationMs: number;
   }> {
     const cache = new AudioCache(cacheDir);
     const voiceConfig = {
@@ -220,11 +254,18 @@ export class Recovoice {
 
     const voiceovers: Array<{ path: string; startMs: number }> = [];
     const allTimings: WordTiming[] = [];
+    const perSegmentTimings: WordTiming[][] = [];
+    const segmentStarts: number[] = [];
     let cumulativeMs = 0;
 
     for (let i = 0; i < script.segments.length; i++) {
       const segment = script.segments[i]!;
-      if (segment.silent || segment.prose.trim() === '') continue;
+      segmentStarts[i] = cumulativeMs;
+
+      if (segment.silent || segment.prose.trim() === '') {
+        perSegmentTimings[i] = [];
+        continue;
+      }
 
       const key = hashSynthesisInput(segment.prose, voiceConfig);
       const cached = cache.getSynthesis(key);
@@ -252,6 +293,7 @@ export class Recovoice {
       const filePath = join(assetsDir, fileName);
       writeFileSync(filePath, audio);
 
+      perSegmentTimings[i] = timings;
       const offsetTimings = timings.map((t) => ({
         word: t.word,
         startMs: t.startMs + cumulativeMs,
@@ -261,12 +303,18 @@ export class Recovoice {
 
       const lastTiming = offsetTimings[offsetTimings.length - 1];
       const segmentDuration = lastTiming ? lastTiming.endMs - cumulativeMs : 0;
-      cumulativeMs += segmentDuration + 200; // small gap between segments
+      cumulativeMs += segmentDuration + 200;
 
-      voiceovers.push({ path: filePath, startMs: 0 });
+      voiceovers.push({ path: filePath, startMs: segmentStarts[i]! });
     }
 
-    return { voiceovers, allTimings };
+    return {
+      voiceovers,
+      allTimings,
+      perSegmentTimings,
+      segmentStarts,
+      totalDurationMs: cumulativeMs,
+    };
   }
 
   private async executeTimedActions(
@@ -320,12 +368,37 @@ export class Recovoice {
 
   private writeCaptions(
     script: Script,
-    timings: WordTiming[],
+    perSegmentTimings: WordTiming[][],
+    segmentStarts: number[],
     srtPath: string,
     vttPath: string,
   ): { srt?: string; vtt?: string } {
     const format = script.frontmatter.captions?.format ?? 'srt';
-    const cues = generateCues(timings);
+    const { generateCuesFromSegments } = captionModule;
+
+    const inputs: Array<{
+      timings: WordTiming[];
+      startOffsetMs: number;
+      overrideText?: string;
+    }> = [];
+
+    for (let i = 0; i < script.segments.length; i++) {
+      const segment = script.segments[i]!;
+      const entry: {
+        timings: WordTiming[];
+        startOffsetMs: number;
+        overrideText?: string;
+      } = {
+        timings: perSegmentTimings[i] ?? [],
+        startOffsetMs: segmentStarts[i] ?? 0,
+      };
+      if (segment.captionOverride) {
+        entry.overrideText = segment.captionOverride.text;
+      }
+      inputs.push(entry);
+    }
+
+    const cues = generateCuesFromSegments(inputs);
     const result: { srt?: string; vtt?: string } = {};
 
     if (format === 'srt' || format === 'both') {

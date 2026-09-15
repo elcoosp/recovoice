@@ -118,3 +118,56 @@ function splitMs(ms: number): { h: number; m: number; s: number; ms: number } {
 function pad(n: number, width: number): string {
   return String(n).padStart(width, '0');
 }
+
+export interface SegmentCaptionInput {
+  timings: WordTiming[];
+  startOffsetMs: number;
+  overrideText?: string;
+}
+
+/**
+ * Generate caption cues across multiple segments, honoring per-segment
+ * caption overrides. When an override is present, one cue is emitted for
+ * the whole segment (using the override text) rather than word-derived cues.
+ */
+export function generateCuesFromSegments(
+  segments: SegmentCaptionInput[],
+  options: GenerateCuesOptions = {},
+): CaptionCue[] {
+  const all: CaptionCue[] = [];
+  let nextIndex = 1;
+
+  for (const seg of segments) {
+    if (seg.timings.length === 0 && !seg.overrideText) continue;
+
+    const startOffset = seg.startOffsetMs;
+    const segEndMs =
+      seg.timings.length > 0
+        ? seg.timings[seg.timings.length - 1]!.endMs
+        : startOffset;
+    const segStartMs =
+      seg.timings.length > 0 ? seg.timings[0]!.startMs : startOffset;
+
+    if (seg.overrideText) {
+      all.push({
+        index: nextIndex++,
+        startMs: startOffset + segStartMs,
+        endMs: startOffset + segEndMs,
+        text: seg.overrideText,
+      });
+      continue;
+    }
+
+    const cues = generateCues(seg.timings, options);
+    for (const cue of cues) {
+      all.push({
+        index: nextIndex++,
+        startMs: cue.startMs + startOffset,
+        endMs: cue.endMs + startOffset,
+        text: cue.text,
+      });
+    }
+  }
+
+  return all;
+}

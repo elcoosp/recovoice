@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { MockTTSProvider } from '../../src/tts/providers/mock.js';
 import { withRetry } from '../../src/tts/retry.js';
-import type { TTSProvider, TTSResult } from '../../src/types/recording.js';
 
 describe('MockTTSProvider', () => {
   it('returns audio buffer and word timings', async () => {
@@ -10,10 +9,19 @@ describe('MockTTSProvider', () => {
       voiceId: 'test',
     });
     expect(result.audio).toBeInstanceOf(Buffer);
-    expect(result.format).toBe('mp3');
+    expect(result.format).toBe('wav');
     expect(result.timings).toHaveLength(2);
     expect(result.timings[0]!.word).toBe('Hello');
     expect(result.timings[1]!.word).toBe('world');
+  });
+
+  it('emits a valid WAV header', async () => {
+    const provider = new MockTTSProvider();
+    const result = await provider.synthesize('Hi there', { voiceId: 'test' });
+    expect(result.audio.subarray(0, 4).toString('ascii')).toBe('RIFF');
+    expect(result.audio.subarray(8, 12).toString('ascii')).toBe('WAVE');
+    expect(result.audio.subarray(12, 16).toString('ascii')).toBe('fmt ');
+    expect(result.audio.subarray(36, 40).toString('ascii')).toBe('data');
   });
 
   it('assigns sequential non-overlapping timings', async () => {
