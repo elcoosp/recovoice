@@ -1,12 +1,3 @@
-#!/usr/bin/env bash
-set -uo pipefail
-
-COMPILE_OK=true
-INCOMPLETE=false
-
-echo "Writing test/integration/e2e.test.ts"
-mkdir -p test/integration
-cat > test/integration/e2e.test.ts << 'EOF'
 import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -260,25 +251,3 @@ describe('end-to-end pipeline', () => {
     expect(analysis.transitions).toEqual([]);
   });
 });
-EOF
-
-echo "Checking compilation"
-if ! pnpm exec tsc --noEmit 2>&1; then
-  echo "Compilation failed - will skip commit"
-  COMPILE_OK=false
-fi
-
-if [ "$INCOMPLETE" = true ] || [ "$COMPILE_OK" = false ]; then
-  echo "Skipping tests and commit due to incomplete files or compilation errors"
-  exit 1
-fi
-
-echo "Running tests"
-if pnpm exec vitest run 2>&1; then
-  echo "All tests passed. Committing."
-  git add -A
-  git commit -m "test(integration): end-to-end pipeline from script to captions, voiceover, polish, compositor"
-else
-  echo "Tests failed. Fix errors then run the next script."
-  exit 1
-fi
