@@ -1,5 +1,11 @@
 export { parseScript, parseScriptFromString } from './parser/parser.js';
 export { ParseError } from './parser/errors.js';
+export { Recovoice } from './recovoice.js';
+export type {
+  RecovoiceOptions,
+  RecovoiceResult,
+  CheckResult,
+} from './recovoice.js';
 export {
   cubicBezier,
   linear,
@@ -50,6 +56,22 @@ export {
   cuesToVtt,
 } from './caption/generator.js';
 export type { CaptionCue, GenerateCuesOptions } from './caption/generator.js';
+export {
+  AudioCache,
+  hashSynthesisInput,
+} from './cache/audio-cache.js';
+export type {
+  RecordingAdapter,
+  RecordingSession,
+  Compositor,
+  CompositorOptions,
+} from './recording/types.js';
+export {
+  StubRecordingAdapter,
+  StubRecordingSession,
+  StubCompositor,
+} from './recording/stub-adapter.js';
+export type { StubCall } from './recording/stub-adapter.js';
 export type {
   Script,
   Segment,
