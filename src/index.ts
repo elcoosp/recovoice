@@ -46,6 +46,20 @@ export {
   VERTICAL_WEIGHT,
   INTENSITY_SCALE,
 } from './polish/cursor-sway.js';
+export {
+  computeCameraState,
+  ZOOM_IN_DURATION_MS,
+  ZOOM_OUT_DURATION_MS,
+} from './polish/camera-state.js';
+export type {
+  CameraState,
+  ComputeCameraStateInput,
+} from './polish/camera-state.js';
+export { CursorStateComputer } from './polish/cursor-state.js';
+export type {
+  CursorFrameState,
+  CursorStateOptions,
+} from './polish/cursor-state.js';
 export { MockTTSProvider } from './tts/providers/mock.js';
 export type { MockTTSOptions } from './tts/providers/mock.js';
 export { withRetry } from './tts/retry.js';
