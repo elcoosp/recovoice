@@ -11,7 +11,7 @@ import type {
   CursorTelemetry,
   WordTiming,
 } from './types/recording.js';
-import type { Script, Segment } from './types/script.js';
+import type { Script, Segment, Frontmatter } from './types/script.js';
 
 export interface RecovoiceCompositorResult {
   rawVideo: string;
@@ -19,6 +19,15 @@ export interface RecovoiceCompositorResult {
   captionsPath?: string;
   telemetry: CursorTelemetry;
   durationMs: number;
+}
+
+export interface RecovoiceConfigSources {
+  /** Explicit path to a config file, or omit to search cwd. */
+  configPath?: string;
+  /** Directory to search for recovoice.config.{js,mjs,cjs,ts}. */
+  configCwd?: string;
+  /** CLI-level overrides that take highest precedence. */
+  cliOverrides?: Partial<Frontmatter>;
 }
 
 export interface RecovoiceOptions {
@@ -31,6 +40,8 @@ export interface RecovoiceOptions {
   voiceoverOnly?: boolean;
   /** Injectable sleep for tests. Defaults to setTimeout-based sleep. */
   sleep?: (ms: number) => Promise<void>;
+  /** Configuration sources beyond frontmatter. */
+  config?: RecovoiceConfigSources;
 }
 
 export interface CheckResult {
@@ -57,6 +68,28 @@ export class Recovoice {
     this.opts = opts;
   }
 
+  private async loadMergedScript(): Promise<Script> {
+    const parsed = parseScript(this.opts.script);
+    if (!this.opts.config) return parsed;
+
+    const { loadConfig, mergeConfig } = await import('./config/loader.js');
+    const configOpts: { cwd?: string; explicitPath?: string } = {};
+    if (this.opts.config.configCwd) configOpts.cwd = this.opts.config.configCwd;
+    if (this.opts.config.configPath) configOpts.explicitPath = this.opts.config.configPath;
+    const loaded = await loadConfig(
+      configOpts.cwd ?? process.cwd(),
+      configOpts.explicitPath,
+    );
+
+    const merged = mergeConfig({
+      frontmatter: parsed.frontmatter,
+      file: loaded.config,
+      cli: this.opts.config.cliOverrides ?? {},
+    });
+
+    return { ...parsed, frontmatter: merged };
+  }
+
   async check(): Promise<CheckResult> {
     try {
       parseScript(this.opts.script);
@@ -75,7 +108,7 @@ export class Recovoice {
   }
 
   async run(): Promise<RecovoiceResult> {
-    const script = parseScript(this.opts.script);
+    const script = await this.loadMergedScript();
     const outputDir = this.opts.output ?? './output';
     const stagingDir = join(outputDir, '.tmp');
     const rawDir = join(stagingDir, 'raw');
@@ -110,11 +143,14 @@ export class Recovoice {
       if (this.opts.voiceoverOnly) {
         // Publish assets and captions without recording or compositing.
         this.publishStaging(stagingDir, outputDir, rawVideoPath);
+        const finalVoiceoverPaths = voiceovers.map((v) =>
+          this.remapToFinalLocation(v.path, stagingDir, outputDir),
+        );
         return {
           finalVideo: '',
           rawVideo: '',
           captions,
-          voiceovers: voiceovers.map((v) => v.path),
+          voiceovers: finalVoiceoverPaths,
           telemetry: {
             events: [],
             timebaseOrigin: 0,
@@ -135,7 +171,7 @@ export class Recovoice {
         (acc, seg) => acc.concat(seg),
         [],
       );
-      await this.executeTimedActions(session, script, flatTimings);
+      await this.executeTimedActions(session, script, flatTimings, outputDir);
 
       const { video } = await session.stopRecording();
       const telemetry = await session.collectTelemetry();
@@ -185,11 +221,15 @@ export class Recovoice {
       // Atomic publish: move staged raw + assets into final location
       this.publishStaging(stagingDir, outputDir, rawVideoPath);
 
+      const finalVoiceoverPaths = voiceovers.map((v) =>
+        this.remapToFinalLocation(v.path, stagingDir, outputDir),
+      );
+
       const result: RecovoiceResult = {
         finalVideo: finalVideoPath,
         rawVideo: rawVideoPath,
         captions,
-        voiceovers: voiceovers.map((v) => v.path),
+        voiceovers: finalVoiceoverPaths,
         telemetry,
         durationMs,
       };
@@ -220,6 +260,16 @@ export class Recovoice {
       return Math.ceil(last.t + 1000);
     }
     return 5000;
+  }
+
+  private remapToFinalLocation(
+    stagedPath: string,
+    stagingDir: string,
+    outputDir: string,
+  ): string {
+    if (!stagedPath.startsWith(stagingDir)) return stagedPath;
+    const relative = stagedPath.slice(stagingDir.length).replace(/^\//, '');
+    return join(outputDir, relative);
   }
 
   private resolveCompositor(result: RecovoiceCompositorResult): Compositor {
@@ -321,6 +371,7 @@ export class Recovoice {
     session: RecordingSession,
     script: Script,
     allTimings: WordTiming[],
+    outputDir: string,
   ): Promise<void> {
     const voiceoverTimings: WordTiming[][] = this.splitTimingsBySegment(
       script,
@@ -332,12 +383,14 @@ export class Recovoice {
       segments: typeof script.segments;
       voiceoverTimings: typeof voiceoverTimings;
       sleep?: (ms: number) => Promise<void>;
+      screenshotDir?: string;
     } = {
       session,
       segments: script.segments,
       voiceoverTimings,
     };
     if (this.opts.sleep) options.sleep = this.opts.sleep;
+    options.screenshotDir = join(outputDir, 'failures');
     await executeTimedActions(options);
   }
 

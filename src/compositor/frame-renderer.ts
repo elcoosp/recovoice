@@ -20,6 +20,12 @@ export interface RenderFrameInput {
   cursorStyle?: CursorStyle;
   /** Zoom motion blur radius in px; 0 disables. */
   zoomBlurRadius?: number;
+  /**
+   * Pre-loaded wallpaper image (from napi-canvas loadImage). When
+   * background.type is "wallpaper" or "blur", this image is drawn as the
+   * background, covering the canvas.
+   */
+  wallpaper?: unknown;
 }
 
 export interface CursorStyle {
@@ -55,7 +61,7 @@ export function renderFrame(
   ctx.clearRect(0, 0, width, height);
   ctx.restore();
 
-  drawBackground(ctx, width, height, input.background);
+  drawBackground(ctx, width, height, input.background, input.wallpaper);
 
   const rect = computeFrameRect(canvas, input);
   drawFrame(ctx, input, rect);
@@ -264,6 +270,7 @@ function drawBackground(
   width: number,
   height: number,
   background: BackgroundConfig,
+  wallpaper: unknown | undefined,
 ): void {
   if (background.type === 'solid') {
     ctx.fillStyle = background.value ?? '#1a1a1a';
@@ -276,6 +283,26 @@ function drawBackground(
     grad.addColorStop(1, '#0f172a');
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, width, height);
+    return;
+  }
+  if ((background.type === 'wallpaper' || background.type === 'blur') && wallpaper) {
+    ctx.save();
+    if (background.type === 'blur') {
+      ctx.filter = 'blur(24px)';
+      // Scale up slightly so the blur doesn't reveal edges
+      const scale = 1.08;
+      const offsetX = -((scale - 1) * width) / 2;
+      const offsetY = -((scale - 1) * height) / 2;
+      ctx.translate(offsetX, offsetY);
+      ctx.scale(scale, scale);
+    }
+    ctx.drawImage(wallpaper, 0, 0, width, height);
+    ctx.restore();
+    // Blur mode dims the wallpaper to make the frame pop
+    if (background.type === 'blur') {
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+      ctx.fillRect(0, 0, width, height);
+    }
     return;
   }
   ctx.fillStyle = background.value ?? '#0a0a0a';

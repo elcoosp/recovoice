@@ -16,6 +16,10 @@ export interface TimedExecutorOptions {
    * Inject a clock for testing. Defaults to setTimeout-based sleep.
    */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Directory for failure screenshots. If omitted, no screenshot is taken.
+   */
+  screenshotDir?: string;
 }
 
 /**
@@ -34,6 +38,7 @@ export async function executeTimedActions(
     voiceoverTimings,
     interSegmentGapMs = 200,
     sleep = defaultSleep,
+    screenshotDir,
   } = options;
 
   const scheduled = scheduleActions(segments, voiceoverTimings);
@@ -50,7 +55,28 @@ export async function executeTimedActions(
       const wait = Math.max(0, sa.offsetMs - cursorMs);
       if (wait > 0) await sleep(wait);
       cursorMs = sa.offsetMs;
-      await session.executeAction(segment.actions[sa.actionIndex]!);
+      const action = segment.actions[sa.actionIndex]!;
+      try {
+        await session.executeAction(action);
+      } catch (err) {
+        if (screenshotDir && session.screenshot) {
+          const { mkdirSync } = await import('node:fs');
+          const { join } = await import('node:path');
+          try {
+            mkdirSync(screenshotDir, { recursive: true });
+            const shotPath = join(
+              screenshotDir,
+              `failure-seg${i + 1}-action${sa.actionIndex + 1}.png`,
+            );
+            await session.screenshot(shotPath);
+          } catch {
+            // Screenshot is best-effort; ignore secondary failures.
+          }
+        }
+        throw new Error(
+          `Action "${action.name}" failed in segment ${i + 1}: ${(err as Error).message}`,
+        );
+      }
     }
 
     // Wait out the remainder of the segment, plus the inter-segment gap

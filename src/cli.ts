@@ -25,6 +25,8 @@ program
   .option('--voiceover-only', 'Only regenerate voiceover and captions (skip recording)')
   .option('--tts <provider>', 'TTS provider (mock|kokoro|edge)', 'kokoro')
   .option('--kokoro-url <url>', 'Kokoro server URL', 'http://localhost:8880')
+  .option('--config <path>', 'Path to config file')
+  .option('--confirm', 'Prompt before incurring TTS costs')
   .option('--no-polish', 'Disable all polish effects')
   .action(async (scriptPath: string, opts: Record<string, unknown>) => {
     const absoluteScript = resolve(scriptPath);
@@ -40,12 +42,30 @@ program
 
     const recordingAdapter = createTauriPlaywrightAdapter();
 
+    if (opts.confirm) {
+      process.stdout.write(
+        `About to synthesize voiceover and record "${absoluteScript}".\n` +
+          'Press Enter to continue, or Ctrl-C to abort.\n',
+      );
+      await new Promise<void>((resolve) => {
+        process.stdin.once('data', () => resolve());
+      });
+    }
+
     const recovoice = new Recovoice({
       script: absoluteScript,
       output: String(opts.output),
       recordingAdapter,
       ttsProvider,
       voiceoverOnly: Boolean(opts.voiceoverOnly),
+      config: {
+        configCwd: process.cwd(),
+        ...(typeof opts.config === 'string' ? { configPath: opts.config } : {}),
+        cliOverrides: {
+          fps: Number(opts.fps),
+          ...(opts.polish === false ? { polish: {} } : {}),
+        },
+      },
       compositorFactory: (result) =>
         createPolishCompositor({
           durationMs: result.durationMs,

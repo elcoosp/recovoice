@@ -8,7 +8,12 @@ import type {
 } from './types.js';
 
 export interface StubCall {
-  method: 'startRecording' | 'stopRecording' | 'executeAction' | 'collectTelemetry';
+  method:
+    | 'startRecording'
+    | 'stopRecording'
+    | 'executeAction'
+    | 'collectTelemetry'
+    | 'screenshot';
   args?: unknown;
 }
 
@@ -38,6 +43,10 @@ export class StubRecordingSession implements RecordingSession {
   async collectTelemetry(): Promise<CursorTelemetry> {
     this.calls.push({ method: 'collectTelemetry' });
     return this.telemetry;
+  }
+
+  async screenshot(path: string): Promise<void> {
+    this.calls.push({ method: 'screenshot', args: path });
   }
 
   async close(): Promise<void> {

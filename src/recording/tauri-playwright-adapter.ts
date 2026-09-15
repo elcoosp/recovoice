@@ -101,6 +101,16 @@ class TauriPlaywrightSession implements RecordingSession {
     };
   }
 
+  async screenshot(path: string): Promise<void> {
+    const fn = (this.page as Record<string, unknown>)['screenshot'];
+    if (typeof fn === 'function') {
+      await (fn as (options: { path: string }) => Promise<void>).call(
+        this.page,
+        { path },
+      );
+    }
+  }
+
   async close(): Promise<void> {
     const close = (this.page as Record<string, unknown>)['close'];
     if (typeof close === 'function') {

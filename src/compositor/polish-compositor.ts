@@ -15,6 +15,8 @@ import {
   isNapiCanvasAvailable,
 } from './napi-canvas.js';
 import { computeZoomBlurRadius } from '../polish/motion-blur.js';
+import { buildFFmpegSubtitleStyle } from '../caption/style.js';
+import type { CaptionStyle } from '../types/script.js';
 import type { CanvasLike, ImageDataLike } from './canvas-types.js';
 
 export interface PolishCompositorOptions {
@@ -106,6 +108,17 @@ class PolishCompositor implements Compositor {
       ...(this.opts.polish?.frame ?? {}),
     };
 
+    let wallpaper: unknown | undefined;
+    if (
+      (bg.type === 'wallpaper' || bg.type === 'blur') &&
+      bg.value &&
+      existsSync(bg.value)
+    ) {
+      const { loadImage } = await import('./napi-canvas.js');
+      const { readFileSync } = await import('node:fs');
+      wallpaper = await loadImage(readFileSync(bg.value));
+    }
+
     try {
       for (const schedule of schedules) {
         const frameBuf = await decoder.nextFrame();
@@ -123,7 +136,7 @@ class PolishCompositor implements Compositor {
         const zoomBlurRadius = zoomBlurEnabled
           ? computeZoomBlurRadius(schedule.cameraVelocity)
           : 0;
-        renderFrame(canvas, {
+        const renderInput: Parameters<typeof renderFrame>[1] = {
           video: scratchCanvas,
           videoWidth: viewport.width,
           videoHeight: viewport.height,
@@ -133,7 +146,9 @@ class PolishCompositor implements Compositor {
           frame: frameCfg,
           cursorStyle: DEFAULT_CURSOR_STYLE,
           zoomBlurRadius,
-        });
+        };
+        if (wallpaper) renderInput.wallpaper = wallpaper;
+        renderFrame(canvas, renderInput);
 
         const rgba = this.readRgbaFromCanvas(
           canvasCtx,
@@ -269,9 +284,14 @@ class PolishCompositor implements Compositor {
       const escaped = opts.captionsPath
         .replace(/\\/g, '\\\\')
         .replace(/:/g, '\\:');
+      const style = buildFFmpegSubtitleStyle(
+        this.opts.polish && 'captionStyle' in this.opts.polish
+          ? (this.opts.polish as { captionStyle?: CaptionStyle }).captionStyle
+          : undefined,
+      );
       args.push(
         '-vf',
-        `subtitles='${escaped}':force_style='FontName=Inter,FontSize=22,PrimaryColour=&HFFFFFF,BackColour=&HB3000000,BorderStyle=4'`,
+        `subtitles='${escaped}':force_style='${style}'`,
       );
     }
 

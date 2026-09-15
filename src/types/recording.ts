@@ -1,3 +1,5 @@
+import type { CaptionStyle } from './script.js';
+
 export interface CursorEvent {
   t: number;
   x: number;
@@ -57,6 +59,7 @@ export interface PolishConfig {
   connectedTransitions?: boolean;
   background?: BackgroundConfig;
   frame?: FrameConfig;
+  captionStyle?: CaptionStyle;
 }
 
 export interface AutoZoomConfig {

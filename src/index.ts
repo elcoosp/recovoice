@@ -2,6 +2,8 @@ export { parseScript, parseScriptFromString } from './parser/parser.js';
 export { ParseError } from './parser/errors.js';
 export { Recovoice } from './recovoice.js';
 export { runDoctor, formatDoctorReport } from './doctor.js';
+export { loadConfig, mergeConfig } from './config/loader.js';
+export type { LoadedConfig, MergeConfigSources } from './config/loader.js';
 export type { Check, DoctorReport } from './doctor.js';
 export { probeVideo } from './util/ffprobe.js';
 export type { ProbeResult, ProbeOptions } from './util/ffprobe.js';
@@ -10,6 +12,7 @@ export type {
   RecovoiceResult,
   CheckResult,
   RecovoiceCompositorResult,
+  RecovoiceConfigSources,
 } from './recovoice.js';
 export {
   cubicBezier,
@@ -115,6 +118,21 @@ export type {
   VoiceoverInput,
   MixOptions,
 } from './compositor/audio-mixer.js';
+export {
+  buildFFmpegSubtitleStyle,
+  hexToAssColor,
+  rgbaToAssColor,
+} from './caption/style.js';
+export type { FFmpegSubtitleStyleOptions } from './caption/style.js';
+export {
+  checkCdpAvailability,
+  describeCdpEndpoint,
+} from './recording/cdp-fallback.js';
+export type {
+  CdpAvailability,
+  CdpLaunchOptions,
+  CdpLaunchResult,
+} from './recording/cdp-fallback.js';
 export {
   AudioCache,
   hashSynthesisInput,

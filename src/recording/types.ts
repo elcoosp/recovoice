@@ -6,6 +6,11 @@ export interface RecordingSession {
   stopRecording(): Promise<{ video: string }>;
   executeAction(action: Action): Promise<void>;
   collectTelemetry(): Promise<CursorTelemetry>;
+  /**
+   * Capture a screenshot to the given path. Used to preserve diagnostic
+   * context when an action fails. Implementations may no-op if unsupported.
+   */
+  screenshot?(path: string): Promise<void>;
   close(): Promise<void>;
 }
 
