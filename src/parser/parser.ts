@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { load as loadYaml } from 'js-yaml';
 import { ParseError } from './errors.js';
+import { validateFrontmatter } from './schema.js';
 import type {
   Action,
   CaptionOverride,
@@ -81,6 +82,13 @@ function extractFrontmatter(content: string): ExtractedFrontmatter {
     throw new ParseError(`Invalid frontmatter YAML: ${(err as Error).message}`);
   }
   const frontmatter = (parsed ?? {}) as Frontmatter;
+  const validation = validateFrontmatter(frontmatter);
+  if (!validation.valid) {
+    const issue = validation.issues[0]!;
+    throw new ParseError(
+      `Invalid frontmatter at "${issue.path}": ${issue.message}`,
+    );
+  }
   const body = content.slice(match[0].length);
   return { frontmatter, body };
 }

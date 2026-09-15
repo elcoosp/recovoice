@@ -17,7 +17,12 @@ import {
 import { computeZoomBlurRadius } from '../polish/motion-blur.js';
 import { buildFFmpegSubtitleStyle } from '../caption/style.js';
 import type { CaptionStyle } from '../types/script.js';
-import type { CanvasLike, ImageDataLike } from './canvas-types.js';
+import {
+  runAnalyzeHooks,
+  runTransformHooks,
+  type PolishPlugin,
+} from '../polish/plugin.js';
+import type { CanvasLike } from './canvas-types.js';
 
 export interface PolishCompositorOptions {
   ffmpegPath?: string;
@@ -28,6 +33,8 @@ export interface PolishCompositorOptions {
   polish?: PolishConfig;
   smoothingFactor?: number;
   usePolish?: boolean;
+  /** Optional polish plugins applied before rendering each frame. */
+  plugins?: PolishPlugin[];
 }
 
 export function createPolishCompositor(
@@ -61,9 +68,19 @@ class PolishCompositor implements Compositor {
     const outputSize = this.opts.outputSize ?? { width: 1920, height: 1080 };
     const viewport = this.opts.telemetry.viewport;
 
-    const analysis = shouldPolish
+    const baseAnalysis = shouldPolish
       ? analyzePolishing(this.opts.telemetry, this.opts.polish ?? {})
       : { zoomRegions: [], transitions: [] };
+
+    const plugins = this.opts.plugins ?? [];
+    const analysis =
+      plugins.length > 0
+        ? runAnalyzeHooks(plugins, {
+            telemetry: this.opts.telemetry,
+            zoomRegions: baseAnalysis.zoomRegions,
+            transitions: baseAnalysis.transitions,
+          })
+        : baseAnalysis;
 
     const polish = this.opts.polish ?? {};
     const scheduleInput: Parameters<typeof scheduleFrames>[0] = {
@@ -131,6 +148,14 @@ class PolishCompositor implements Compositor {
           viewport.width,
           viewport.height,
         );
+
+        if (plugins.length > 0) {
+          runTransformHooks(plugins, {
+            tMs: schedule.tMs,
+            camera: schedule.camera,
+            cursor: schedule.cursor,
+          });
+        }
 
         const zoomBlurEnabled = polish.zoomMotionBlur !== false;
         const zoomBlurRadius = zoomBlurEnabled
@@ -335,4 +360,4 @@ class PolishCompositor implements Compositor {
   }
 }
 
-export type { ImageDataLike };
+
