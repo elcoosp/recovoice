@@ -1,3 +1,5 @@
+const noopSleep = async (): Promise<void> => undefined;
+
 import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -38,7 +40,7 @@ beforeEach(() => {
 
 describe('Recovoice.check', () => {
   it('returns valid for a well-formed script', async () => {
-    const recovoice = new Recovoice({ script: scriptPath });
+    const recovoice = new Recovoice({ sleep: noopSleep, script: scriptPath   });
     const result = await recovoice.check();
     expect(result.valid).toBe(true);
     expect(result.errors).toEqual([]);
@@ -46,7 +48,7 @@ describe('Recovoice.check', () => {
 
   it('reports errors for a malformed script', async () => {
     writeFileSync(scriptPath, '`bad action here`\nprose\n');
-    const recovoice = new Recovoice({ script: scriptPath });
+    const recovoice = new Recovoice({ sleep: noopSleep, script: scriptPath   });
     const result = await recovoice.check();
     expect(result.valid).toBe(false);
     expect(result.errors.length).toBeGreaterThan(0);
@@ -65,10 +67,11 @@ describe('Recovoice.check', () => {
       },
     };
     const recovoice = new Recovoice({
+      sleep: noopSleep,
       script: scriptPath,
       recordingAdapter: adapter,
       ttsProvider: wrappedTts,
-    });
+     });
     await recovoice.check();
     expect(adapter.sessions).toHaveLength(0);
     expect(ttsCalls).toBe(0);
@@ -82,12 +85,13 @@ describe('Recovoice.run', () => {
     });
     const compositor = new StubCompositor();
     const recovoice = new Recovoice({
+      sleep: noopSleep,
       script: scriptPath,
       output: outputDir,
       recordingAdapter: adapter,
       ttsProvider: new MockTTSProvider(),
       compositor,
-    });
+     });
 
     const result = await recovoice.run();
 
@@ -109,12 +113,13 @@ describe('Recovoice.run', () => {
       rawVideoPath: join(workDir, 'raw.mp4'),
     });
     const recovoice = new Recovoice({
+      sleep: noopSleep,
       script: scriptPath,
       output: outputDir,
       recordingAdapter: adapter,
       ttsProvider: new MockTTSProvider(),
       compositor: new StubCompositor(),
-    });
+     });
     await recovoice.run();
     const session = adapter.sessions[0]!;
     const methods = session.calls.map((c) => c.method);
@@ -128,12 +133,13 @@ describe('Recovoice.run', () => {
       rawVideoPath: join(workDir, 'raw.mp4'),
     });
     const recovoice = new Recovoice({
+      sleep: noopSleep,
       script: scriptPath,
       output: outputDir,
       recordingAdapter: adapter,
       ttsProvider: new MockTTSProvider(),
       compositor: new StubCompositor(),
-    });
+     });
     const result = await recovoice.run();
     expect(result.voiceovers.length).toBe(2);
   });
@@ -143,12 +149,13 @@ describe('Recovoice.run', () => {
       rawVideoPath: join(workDir, 'raw.mp4'),
     });
     const recovoice = new Recovoice({
+      sleep: noopSleep,
       script: scriptPath,
       output: outputDir,
       recordingAdapter: adapter,
       ttsProvider: new MockTTSProvider(),
       compositor: new StubCompositor(),
-    });
+     });
     await recovoice.run();
     expect(existsSync(join(outputDir, 'captions.srt'))).toBe(true);
   });
@@ -167,22 +174,24 @@ describe('Recovoice.run', () => {
     });
 
     const recovoice1 = new Recovoice({
+      sleep: noopSleep,
       script: scriptPath,
       output: outputDir,
       recordingAdapter: adapter,
       ttsProvider: wrappedTts,
       compositor: new StubCompositor(),
-    });
+     });
     await recovoice1.run();
     const callsAfterFirst = calls;
 
     const recovoice2 = new Recovoice({
+      sleep: noopSleep,
       script: scriptPath,
       output: outputDir,
       recordingAdapter: adapter,
       ttsProvider: wrappedTts,
       compositor: new StubCompositor(),
-    });
+     });
     await recovoice2.run();
 
     expect(calls).toBe(callsAfterFirst);
@@ -202,12 +211,13 @@ describe('Recovoice.run', () => {
       },
     });
     const recovoice = new Recovoice({
+      sleep: noopSleep,
       script: scriptPath,
       output: outputDir,
       recordingAdapter: adapter,
       ttsProvider: new MockTTSProvider(),
       compositor: new StubCompositor(),
-    });
+     });
     const result = await recovoice.run();
     expect(result.telemetry.events).toEqual(telemetryEvents);
   });
@@ -219,12 +229,13 @@ describe('Recovoice.run', () => {
       },
     };
     const recovoice = new Recovoice({
+      sleep: noopSleep,
       script: scriptPath,
       output: outputDir,
       recordingAdapter: failingAdapter,
       ttsProvider: new MockTTSProvider(),
       compositor: new StubCompositor(),
-    });
+     });
     await expect(recovoice.run()).rejects.toThrow('launch failed');
     // Final output directory should not contain a final.mp4
     expect(existsSync(join(outputDir, 'final.mp4'))).toBe(false);
@@ -237,13 +248,14 @@ describe('Recovoice.run with voiceoverOnly', () => {
       rawVideoPath: join(workDir, 'raw.mp4'),
     });
     const recovoice = new Recovoice({
+      sleep: noopSleep,
       script: scriptPath,
       output: outputDir,
       recordingAdapter: adapter,
       ttsProvider: new MockTTSProvider(),
       compositor: new StubCompositor(),
       voiceoverOnly: true,
-    });
+     });
     const result = await recovoice.run();
     expect(adapter.sessions).toHaveLength(0);
     expect(result.finalVideo).toBe('');
@@ -264,12 +276,13 @@ describe('Recovoice options', () => {
       rawVideoPath: join(workDir, 'raw.mp4'),
     });
     const recovoice = new Recovoice({
+      sleep: noopSleep,
       script: scriptPath,
       output: outputDir,
       recordingAdapter: adapter,
       ttsProvider: new MockTTSProvider(),
       compositor: new StubCompositor(),
-    });
+     });
     await recovoice.run();
     const startCall = adapter.sessions[0]!.calls.find(
       (c) => c.method === 'startRecording',
@@ -282,12 +295,13 @@ describe('Recovoice options', () => {
       rawVideoPath: join(workDir, 'raw.mp4'),
     });
     const recovoice = new Recovoice({
+      sleep: noopSleep,
       script: scriptPath,
       output: outputDir,
       recordingAdapter: adapter,
       ttsProvider: new MockTTSProvider(),
       compositor: new StubCompositor(),
-    });
+     });
     await recovoice.run();
     const startCall = adapter.sessions[0]!.calls.find(
       (c) => c.method === 'startRecording',

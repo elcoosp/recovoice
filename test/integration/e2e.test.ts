@@ -1,3 +1,5 @@
+const noopSleep = async (): Promise<void> => undefined;
+
 import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -65,12 +67,13 @@ describe('end-to-end pipeline', () => {
     const compositor = new StubCompositor();
 
     const recovoice = new Recovoice({
+      sleep: noopSleep,
       script: scriptPath,
       output: outputDir,
       recordingAdapter: adapter,
       ttsProvider: new MockTTSProvider(),
       compositor,
-    });
+     });
 
     const result = await recovoice.run();
 
@@ -86,12 +89,13 @@ describe('end-to-end pipeline', () => {
       telemetry: TELEMETRY,
     });
     const recovoice = new Recovoice({
+      sleep: noopSleep,
       script: scriptPath,
       output: outputDir,
       recordingAdapter: adapter,
       ttsProvider: new MockTTSProvider(),
       compositor: new StubCompositor(),
-    });
+     });
     await recovoice.run();
     const srt = readFileSync(join(outputDir, 'captions.srt'), 'utf-8');
     expect(srt).toContain('Acme');
@@ -104,12 +108,13 @@ describe('end-to-end pipeline', () => {
       telemetry: TELEMETRY,
     });
     const recovoice = new Recovoice({
+      sleep: noopSleep,
       script: scriptPath,
       output: outputDir,
       recordingAdapter: adapter,
       ttsProvider: new MockTTSProvider(),
       compositor: new StubCompositor(),
-    });
+     });
     const result = await recovoice.run();
 
     const analysis = analyzePolishing(result.telemetry, {});
@@ -140,12 +145,13 @@ describe('end-to-end pipeline', () => {
     });
     const compositor = new StubCompositor();
     const recovoice = new Recovoice({
+      sleep: noopSleep,
       script: scriptPath,
       output: outputDir,
       recordingAdapter: adapter,
       ttsProvider: new MockTTSProvider(),
       compositor,
-    });
+     });
     await recovoice.run();
     expect(compositor.calls).toHaveLength(1);
     const call = compositor.calls[0]!;
@@ -162,12 +168,13 @@ describe('end-to-end pipeline', () => {
       rawVideoPath: join(workDir, 'raw.mp4'),
     });
     const recovoice = new Recovoice({
+      sleep: noopSleep,
       script: scriptPath,
       output: outputDir,
       recordingAdapter: adapter,
       ttsProvider: new MockTTSProvider(),
       compositor: new StubCompositor(),
-    });
+     });
     await recovoice.run();
     const session = adapter.sessions[0]!;
     const actionCall = session.calls.find((c) => c.method === 'executeAction');
@@ -181,12 +188,13 @@ describe('end-to-end pipeline', () => {
     });
     const compositor1 = new StubCompositor();
     await new Recovoice({
+      sleep: noopSleep,
       script: scriptPath,
       output: join(workDir, 'out1'),
       recordingAdapter: adapter1,
       ttsProvider: new MockTTSProvider(),
       compositor: compositor1,
-    }).run();
+     }).run();
 
     const adapter2 = new StubRecordingAdapter({
       rawVideoPath: join(workDir, 'b.mp4'),
@@ -194,12 +202,13 @@ describe('end-to-end pipeline', () => {
     });
     const compositor2 = new StubCompositor();
     await new Recovoice({
+      sleep: noopSleep,
       script: scriptPath,
       output: join(workDir, 'out2'),
       recordingAdapter: adapter2,
       ttsProvider: new MockTTSProvider(),
       compositor: compositor2,
-    }).run();
+     }).run();
 
     const srt1 = readFileSync(join(workDir, 'out1', 'captions.srt'), 'utf-8');
     const srt2 = readFileSync(join(workDir, 'out2', 'captions.srt'), 'utf-8');
@@ -215,12 +224,13 @@ describe('end-to-end pipeline', () => {
       rawVideoPath: join(workDir, 'raw.mp4'),
     });
     const recovoice = new Recovoice({
+      sleep: noopSleep,
       script: scriptPath,
       output: outputDir,
       recordingAdapter: adapter,
       ttsProvider: new MockTTSProvider(),
       compositor: new StubCompositor(),
-    });
+     });
     await recovoice.run();
     // Caption override still needs to be honored by the caption generator;
     // for now, the pipeline generates cues from TTS timings of the spoken
@@ -238,12 +248,13 @@ describe('end-to-end pipeline', () => {
     });
     const compositor = new StubCompositor();
     const recovoice = new Recovoice({
+      sleep: noopSleep,
       script: scriptPath,
       output: outputDir,
       recordingAdapter: adapter,
       ttsProvider: new MockTTSProvider(),
       compositor,
-    });
+     });
     await recovoice.run();
 
     const analysis = analyzePolishing(TELEMETRY, { autoZoom: false });

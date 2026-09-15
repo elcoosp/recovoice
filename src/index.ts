@@ -122,6 +122,17 @@ export {
 } from './recording/stub-adapter.js';
 export type { StubCall } from './recording/stub-adapter.js';
 export { createTauriPlaywrightAdapter } from './recording/tauri-playwright-adapter.js';
+export {
+  scheduleActions,
+  absoluteActionTimes,
+} from './recording/timing.js';
+export type {
+  ScheduledAction,
+  SegmentTimings,
+  SegmentAudioTiming,
+} from './recording/timing.js';
+export { executeTimedActions } from './recording/timed-executor.js';
+export type { TimedExecutorOptions } from './recording/timed-executor.js';
 export { createFfmpegCompositor } from './compositor/ffmpeg-compositor.js';
 export type { FfmpegCompositorOptions } from './compositor/ffmpeg-compositor.js';
 export { createPolishCompositor } from './compositor/polish-compositor.js';

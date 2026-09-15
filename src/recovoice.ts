@@ -5,7 +5,11 @@ import { ParseError } from './parser/errors.js';
 import { AudioCache, hashSynthesisInput } from './cache/audio-cache.js';
 import { generateCues, cuesToSrt, cuesToVtt } from './caption/generator.js';
 import type { RecordingAdapter, RecordingSession, Compositor } from './recording/types.js';
-import type { TTSProvider, CursorTelemetry, WordTiming } from './types/recording.js';
+import type {
+  TTSProvider,
+  CursorTelemetry,
+  WordTiming,
+} from './types/recording.js';
 import type { Script, Segment } from './types/script.js';
 
 export interface RecovoiceCompositorResult {
@@ -24,6 +28,8 @@ export interface RecovoiceOptions {
   compositor?: Compositor;
   compositorFactory?: (result: RecovoiceCompositorResult) => Compositor;
   voiceoverOnly?: boolean;
+  /** Injectable sleep for tests. Defaults to setTimeout-based sleep. */
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface CheckResult {
@@ -117,7 +123,7 @@ export class Recovoice {
       const fps = script.frontmatter.fps ?? DEFAULT_FPS;
       await session.startRecording({ path: rawDir, fps });
 
-      await this.executeAllActions(session, script);
+      await this.executeTimedActions(session, script, allTimings);
 
       const { video } = await session.stopRecording();
       const telemetry = await session.collectTelemetry();
@@ -263,15 +269,53 @@ export class Recovoice {
     return { voiceovers, allTimings };
   }
 
-  private async executeAllActions(
+  private async executeTimedActions(
     session: RecordingSession,
     script: Script,
+    allTimings: WordTiming[],
   ): Promise<void> {
+    const voiceoverTimings: WordTiming[][] = this.splitTimingsBySegment(
+      script,
+      allTimings,
+    );
+    const { executeTimedActions } = await import('./recording/timed-executor.js');
+    const options: {
+      session: RecordingSession;
+      segments: typeof script.segments;
+      voiceoverTimings: typeof voiceoverTimings;
+      sleep?: (ms: number) => Promise<void>;
+    } = {
+      session,
+      segments: script.segments,
+      voiceoverTimings,
+    };
+    if (this.opts.sleep) options.sleep = this.opts.sleep;
+    await executeTimedActions(options);
+  }
+
+  private splitTimingsBySegment(
+    script: Script,
+    allTimings: WordTiming[],
+  ): WordTiming[][] {
+    // The synthesizer concatenates timings in segment order. We walk through
+    // segments in order, assigning timings whose startMs falls inside the
+    // segment's cumulative window. Because we now know each segment's length
+    // from its own synthesis, we can slice cleanly if we kept per-segment
+    // timings. For now, we re-derive by matching prose word counts.
+    const perSegment: WordTiming[][] = [];
+    let cursor = 0;
+
     for (const segment of script.segments) {
-      for (const action of segment.actions) {
-        await session.executeAction(action);
+      if (segment.silent || segment.prose.trim() === '') {
+        perSegment.push([]);
+        continue;
       }
+      const words = segment.prose.trim().split(/\s+/);
+      const slice = allTimings.slice(cursor, cursor + words.length);
+      perSegment.push(slice);
+      cursor += words.length;
     }
+    return perSegment;
   }
 
   private writeCaptions(
