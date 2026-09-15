@@ -14,6 +14,7 @@ import {
   createNapiCanvas,
   isNapiCanvasAvailable,
 } from './napi-canvas.js';
+import { computeZoomBlurRadius } from '../polish/motion-blur.js';
 import type { CanvasLike, ImageDataLike } from './canvas-types.js';
 
 export interface PolishCompositorOptions {
@@ -62,17 +63,26 @@ class PolishCompositor implements Compositor {
       ? analyzePolishing(this.opts.telemetry, this.opts.polish ?? {})
       : { zoomRegions: [], transitions: [] };
 
-    const schedules = Array.from(
-      scheduleFrames({
-        durationMs: this.opts.durationMs,
-        fps: this.opts.fps,
-        viewport,
-        telemetry: this.opts.telemetry,
-        zoomRegions: analysis.zoomRegions,
-        transitions: analysis.transitions,
-        smoothingFactor: this.opts.smoothingFactor ?? 0.3,
-      }),
-    );
+    const polish = this.opts.polish ?? {};
+    const scheduleInput: Parameters<typeof scheduleFrames>[0] = {
+      durationMs: this.opts.durationMs,
+      fps: this.opts.fps,
+      viewport,
+      telemetry: this.opts.telemetry,
+      zoomRegions: analysis.zoomRegions,
+      transitions: analysis.transitions,
+      smoothingFactor:
+        typeof polish.cursorSmoothing === 'number'
+          ? polish.cursorSmoothing
+          : this.opts.smoothingFactor ?? 0.3,
+    };
+    if (polish.cursorSway === false) scheduleInput.disableSway = true;
+    if (polish.cursorMotionBlur === false)
+      scheduleInput.disableCursorMotionBlur = true;
+    if (polish.zoomMotionBlur === false)
+      scheduleInput.disableZoomMotionBlur = true;
+
+    const schedules = Array.from(scheduleFrames(scheduleInput));
 
     if (schedules.length === 0) {
       throw new Error('Polish compositor produced zero frames to render');
@@ -109,6 +119,10 @@ class PolishCompositor implements Compositor {
           viewport.height,
         );
 
+        const zoomBlurEnabled = polish.zoomMotionBlur !== false;
+        const zoomBlurRadius = zoomBlurEnabled
+          ? computeZoomBlurRadius(schedule.cameraVelocity)
+          : 0;
         renderFrame(canvas, {
           video: scratchCanvas,
           videoWidth: viewport.width,
@@ -118,6 +132,7 @@ class PolishCompositor implements Compositor {
           background: bg,
           frame: frameCfg,
           cursorStyle: DEFAULT_CURSOR_STYLE,
+          zoomBlurRadius,
         });
 
         const rgba = this.readRgbaFromCanvas(

@@ -18,6 +18,8 @@ export interface RenderFrameInput {
   background: BackgroundConfig;
   frame: Required<FrameConfig>;
   cursorStyle?: CursorStyle;
+  /** Zoom motion blur radius in px; 0 disables. */
+  zoomBlurRadius?: number;
 }
 
 export interface CursorStyle {
@@ -133,6 +135,11 @@ function drawFrame(
   );
   ctx.clip();
 
+  const zoomBlur = input.zoomBlurRadius ?? 0;
+  if (zoomBlur > 0.1) {
+    ctx.filter = `blur(${zoomBlur.toFixed(2)}px)`;
+  }
+
   const { camera } = input;
   const totalScale = rect.baseScale * camera.scale;
 
@@ -154,6 +161,7 @@ function drawFrame(
     input.videoWidth,
     input.videoHeight,
   );
+  ctx.filter = 'none';
   ctx.restore();
 }
 

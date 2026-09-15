@@ -14,6 +14,10 @@ export interface ScheduleInput {
   zoomRegions: ZoomRegion[];
   transitions: ConnectedTransition[];
   smoothingFactor: number;
+  disableSway?: boolean;
+  disableCursorMotionBlur?: boolean;
+  disableClickPulse?: boolean;
+  disableZoomMotionBlur?: boolean;
 }
 
 export interface FrameSchedule {
@@ -21,13 +25,36 @@ export interface FrameSchedule {
   tMs: number;
   camera: CameraState;
   cursor: CursorFrameState;
+  cameraVelocity: number;
 }
 
 export function* scheduleFrames(input: ScheduleInput): Generator<FrameSchedule> {
-  const { durationMs, fps, viewport, telemetry, zoomRegions, transitions, smoothingFactor } = input;
+  const {
+    durationMs,
+    fps,
+    viewport,
+    telemetry,
+    zoomRegions,
+    transitions,
+    smoothingFactor,
+  } = input;
+
   const frameIntervalMs = 1000 / fps;
   const totalFrames = Math.round((durationMs * fps) / 1000);
-  const cursorComputer = new CursorStateComputer(telemetry, { smoothingFactor });
+
+  const cursorOptions: {
+    smoothingFactor: number;
+    disableSway?: boolean;
+    disableMotionBlur?: boolean;
+    disableClickPulse?: boolean;
+  } = { smoothingFactor };
+  if (input.disableSway) cursorOptions.disableSway = true;
+  if (input.disableCursorMotionBlur) cursorOptions.disableMotionBlur = true;
+  if (input.disableClickPulse) cursorOptions.disableClickPulse = true;
+
+  const cursorComputer = new CursorStateComputer(telemetry, cursorOptions);
+
+  let previousCamera: CameraState | null = null;
 
   for (let frameIndex = 0; frameIndex < totalFrames; frameIndex++) {
     const tMs = frameIndex * frameIntervalMs;
@@ -37,7 +64,20 @@ export function* scheduleFrames(input: ScheduleInput): Generator<FrameSchedule> 
       tMs,
       viewport,
     });
+
+    let cameraVelocity = 0;
+    if (previousCamera) {
+      const dScale = Math.abs(camera.scale - previousCamera.scale);
+      const dPan = Math.sqrt(
+        (camera.translateX - previousCamera.translateX) ** 2 +
+          (camera.translateY - previousCamera.translateY) ** 2,
+      );
+      const dtSec = frameIntervalMs / 1000;
+      cameraVelocity = (dScale * 100 + dPan) / dtSec;
+    }
+    previousCamera = camera;
+
     const cursor = cursorComputer.computeAt(tMs);
-    yield { frameIndex, tMs, camera, cursor };
+    yield { frameIndex, tMs, camera, cursor, cameraVelocity };
   }
 }
