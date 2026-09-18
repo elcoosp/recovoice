@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { spawn } from 'node:child_process';
 import type { Compositor, CompositorOptions } from '../recording/types.js';
+import { resolveFFmpegPath } from '../config/env.js';
 
 export interface FfmpegCompositorOptions {
   ffmpegPath?: string;
@@ -19,7 +20,7 @@ class FfmpegCompositor implements Compositor {
   private readonly dryRun: boolean;
 
   constructor(options: FfmpegCompositorOptions) {
-    this.ffmpegPath = options.ffmpegPath ?? 'ffmpeg';
+    this.ffmpegPath = options.ffmpegPath ?? resolveFFmpegPath();
     this.dryRun = options.dryRun ?? false;
   }
 
