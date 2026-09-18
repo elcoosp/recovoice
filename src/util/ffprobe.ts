@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { resolveFFProbePath } from '../config/env.js';
 
 export interface ProbeResult {
   durationMs: number;
@@ -15,7 +16,7 @@ export async function probeVideo(
   filePath: string,
   options: ProbeOptions = {},
 ): Promise<ProbeResult> {
-  const ffprobe = options.ffprobePath ?? 'ffprobe';
+  const ffprobe = options.ffprobePath ?? resolveFFProbePath();
   const args = [
     '-v', 'error',
     '-select_streams', 'v:0',
