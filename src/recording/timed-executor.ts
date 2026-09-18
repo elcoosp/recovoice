@@ -56,6 +56,18 @@ export async function executeTimedActions(
       if (wait > 0) await sleep(wait);
       cursorMs = sa.offsetMs;
       const action = segment.actions[sa.actionIndex]!;
+
+      if (isInteractiveAction(action.name)) {
+        // Human micro-pacing: a short "thinking" pause before reaching out,
+        // then sweep the cursor to the target with an eased, slightly arced
+        // path. Recorded only when the session can synthesize motion.
+        await sleep(thinkPauseMs());
+        const target = action.args[0];
+        if (typeof target === 'string' && session.moveCursorTo) {
+          await session.moveCursorTo(target);
+        }
+      }
+
       try {
         await session.executeAction(action);
       } catch (err) {
@@ -91,4 +103,23 @@ export async function executeTimedActions(
 
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const INTERACTIVE_ACTIONS = new Set([
+  'click',
+  'pointerClick',
+  'dblclick',
+  'hover',
+  'press',
+  'type',
+  'fill',
+  'selectOption',
+]);
+
+function isInteractiveAction(name: string): boolean {
+  return INTERACTIVE_ACTIONS.has(name);
+}
+
+function thinkPauseMs(): number {
+  return 80 + Math.random() * 180;
 }
