@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, existsSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseScript } from './parser/parser.js';
 import { ParseError } from './parser/errors.js';
@@ -12,6 +12,8 @@ import type {
   WordTiming,
 } from './types/recording.js';
 import type { Script, Segment, Frontmatter } from './types/script.js';
+import { createTTSProvider } from './tts/factory.js';
+import { resolveFFmpegPath, resolveFFProbePath } from './config/env.js';
 
 export interface RecovoiceCompositorResult {
   rawVideo: string;
@@ -19,6 +21,10 @@ export interface RecovoiceCompositorResult {
   captionsPath?: string;
   telemetry: CursorTelemetry;
   durationMs: number;
+  /** Whether captions should be burned onto the video (from frontmatter). */
+  burn?: boolean;
+  /** Raw polish config from frontmatter, for the compositor factory. */
+  polish?: unknown;
 }
 
 export interface RecovoiceConfigSources {
@@ -34,7 +40,13 @@ export interface RecovoiceOptions {
   script: string;
   output?: string;
   recordingAdapter: RecordingAdapter;
-  ttsProvider: TTSProvider;
+  /**
+   * TTS provider override. When omitted, the provider is resolved from the
+   * script's `voiceover.provider` frontmatter (or mock).
+   */
+  ttsProvider?: TTSProvider;
+  /** Base URL for the Kokoro server when resolved lazily from frontmatter. */
+  kokoroUrl?: string;
   compositor?: Compositor;
   compositorFactory?: (result: RecovoiceCompositorResult) => Compositor;
   voiceoverOnly?: boolean;
@@ -57,6 +69,20 @@ export interface RecovoiceResult {
   telemetry: CursorTelemetry;
   durationMs: number;
 }
+
+function resolveProviderFromFrontmatter(
+  provider: string | undefined,
+  kokoroUrl?: string,
+): TTSFactoryOptions {
+  const name = (provider ?? 'mock') as 'mock' | 'kokoro' | 'edge';
+  const safe = name === 'mock' || name === 'kokoro' || name === 'edge' ? name : 'mock';
+  const opts: TTSFactoryOptions = { provider: safe };
+  if (kokoroUrl) opts.kokoroUrl = kokoroUrl;
+  return opts;
+}
+
+// Re-export the factory option type for the helper above.
+type TTSFactoryOptions = Parameters<typeof createTTSProvider>[0];
 
 const DEFAULT_FPS = 60;
 const DEFAULT_VIEWPORT = { width: 1280, height: 800 };
@@ -88,6 +114,14 @@ export class Recovoice {
     });
 
     return { ...parsed, frontmatter: merged };
+  }
+
+  /**
+   * Load and merge the script's frontmatter with config, without executing
+   * anything. Useful for pre-flight decisions (TTS provider, typing speed).
+   */
+  async loadScriptMeta(): Promise<Script> {
+    return this.loadMergedScript();
   }
 
   async check(): Promise<CheckResult> {
@@ -191,6 +225,7 @@ export class Recovoice {
         audioTrackPath = join(stagingDir, 'mixed-audio.m4a');
         await mixVoiceovers(voiceoverInputs, audioTrackPath, {
           totalDurationMs: Math.max(durationMs, totalDurationMs),
+          ffmpegPath: resolveFFmpegPath(),
         });
       }
 
@@ -200,6 +235,8 @@ export class Recovoice {
         captionsPath: existsSync(srtPath) ? srtPath : undefined,
         telemetry,
         durationMs,
+        burn: script.frontmatter.captions?.burn ?? true,
+        polish: script.frontmatter.polish,
       });
 
       const composeOptions: {
@@ -237,7 +274,18 @@ export class Recovoice {
     } catch (err) {
       // Clean up staging on failure; leave output dir without a final.mp4
       if (existsSync(stagingDir)) {
-        rmSync(stagingDir, { recursive: true, force: true });
+        try {
+          rmSync(stagingDir, { recursive: true, force: true });
+        } catch (cleanupErr) {
+          await new Promise((r) => setTimeout(r, 1500));
+          try {
+            rmSync(stagingDir, { recursive: true, force: true });
+          } catch {
+            process.stderr.write(
+              'recovoice: failed to clean staging dir\n',
+            );
+          }
+        }
       }
       throw err;
     }
@@ -250,7 +298,9 @@ export class Recovoice {
     // Try ffprobe first; fall back to last telemetry event + buffer
     try {
       const { probeVideo } = await import('./util/ffprobe.js');
-      const probe = await probeVideo(videoPath);
+      const probe = await probeVideo(videoPath, {
+        ffprobePath: resolveFFProbePath(),
+      });
       if (probe.durationMs > 0) return probe.durationMs;
     } catch {
       // ignore probe failure and fall back
@@ -302,6 +352,15 @@ export class Recovoice {
         : {}),
     };
 
+    const provider =
+      this.opts.ttsProvider ??
+      createTTSProvider(
+        resolveProviderFromFrontmatter(
+          script.frontmatter.voiceover?.provider,
+          this.opts.kokoroUrl,
+        ),
+      );
+
     const voiceovers: Array<{ path: string; startMs: number }> = [];
     const allTimings: WordTiming[] = [];
     const perSegmentTimings: WordTiming[][] = [];
@@ -329,7 +388,7 @@ export class Recovoice {
         timings = cached.timings;
         format = cached.format;
       } else {
-        const result = await this.opts.ttsProvider.synthesize(
+        const result = await provider.synthesize(
           segment.prose,
           voiceConfig,
         );
@@ -473,7 +532,6 @@ export class Recovoice {
     // Move raw/ and assets/ into final position for observability
     const finalRawDir = join(outputDir, 'raw');
     const finalAssetsDir = join(outputDir, 'assets');
-    const { renameSync } = require('node:fs') as typeof import('node:fs');
     if (existsSync(join(stagingDir, 'raw'))) {
       if (existsSync(finalRawDir)) rmSync(finalRawDir, { recursive: true, force: true });
       renameSync(join(stagingDir, 'raw'), finalRawDir);
