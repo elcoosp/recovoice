@@ -9,14 +9,24 @@ export interface AutoZoomConfig {
   dwellRadiusPx?: number;
   minClickCluster?: number;
   clickClusterTimeMs?: number;
+  minClickRegionMs?: number;
+  maxDwellMs?: number;
+  minRegionStartMs?: number;
+  maxRegionMs?: number;
+  minGapBetweenRegionsMs?: number;
   defaultDepth?: number;
 }
 
 export const DEFAULT_AUTO_ZOOM_CONFIG: Required<AutoZoomConfig> = {
   minDwellMs: 800,
   dwellRadiusPx: 100,
-  minClickCluster: 2,
+  minClickCluster: 1,
   clickClusterTimeMs: 3000,
+  minClickRegionMs: 1200,
+  maxDwellMs: 1800,
+  minRegionStartMs: 1500,
+  maxRegionMs: 2600,
+  minGapBetweenRegionsMs: 0,
   defaultDepth: 1.5,
 };
 
@@ -38,15 +48,57 @@ export function analyzeZoomRegions(
 
   const dwells = findDwellRegions(telemetry.events, cfg);
   const clicks = findClickRegions(telemetry.events, cfg);
-  const merged = mergeRegions([...dwells, ...clicks]);
+  const merged = postProcessRegions(mergeRegions([...dwells, ...clicks]), cfg);
+
+  const { width, height } = telemetry.viewport ?? {
+    width: 1280,
+    height: 800,
+  };
 
   return merged.map((r, i) => ({
     id: `zoom-${i + 1}`,
     startMs: r.startMs,
     endMs: r.endMs,
-    focus: { cx: r.sumX / r.count, cy: r.sumY / r.count },
+    focus: {
+      cx: Math.min(width, Math.max(0, r.sumX / r.count)),
+      cy: Math.min(height, Math.max(0, r.sumY / r.count)),
+    },
     depth: cfg.defaultDepth,
   }));
+}
+
+/**
+ * Clamp region windows so the video opens at full view, no single zoom holds
+ * forever, and consecutive zooms are separated by a visible identity gap.
+ */
+function postProcessRegions(
+  regions: RawRegion[],
+  cfg: Required<AutoZoomConfig>,
+): RawRegion[] {
+  const result: RawRegion[] = [];
+
+  for (let i = 0; i < regions.length; i++) {
+    let r = { ...regions[i]! };
+
+    // Lead-in: no zoom before minRegionStartMs so the video opens unzoomed.
+    r.startMs = Math.max(r.startMs, cfg.minRegionStartMs);
+    // Cap total zoom window so the camera returns to full view.
+    r.endMs = Math.min(r.endMs, r.startMs + cfg.maxRegionMs);
+
+    if (r.endMs <= r.startMs) continue;
+
+    // Enforce an identity gap against the previous region.
+    const prev = result[result.length - 1];
+    if (prev && r.startMs - prev.endMs < cfg.minGapBetweenRegionsMs) {
+      r.startMs = prev.endMs + cfg.minGapBetweenRegionsMs;
+      r.endMs = Math.max(r.startMs, Math.min(r.endMs, r.startMs + cfg.maxRegionMs));
+      if (r.endMs <= r.startMs) continue;
+    }
+
+    result.push(r);
+  }
+
+  return result;
 }
 
 function findDwellRegions(
@@ -83,7 +135,7 @@ function findDwellRegions(
     ) {
       regions.push({
         startMs: anchor.t,
-        endMs: lastT,
+        endMs: Math.min(lastT, anchor.t + cfg.maxDwellMs),
         sumX,
         sumY,
         count: clusterCount,
@@ -123,9 +175,15 @@ function findClickRegions(
     }
 
     if (count >= cfg.minClickCluster) {
+      // Give even a single click a non-zero active window so the camera
+      // actually zooms in and back out (zero-width regions never activate).
+      const lastT = clicks[j - 1]!.t;
       regions.push({
         startMs: anchor.t,
-        endMs: clicks[j - 1]!.t,
+        endMs: Math.min(
+          Math.max(lastT, anchor.t + cfg.minClickRegionMs),
+          anchor.t + cfg.maxRegionMs,
+        ),
         sumX,
         sumY,
         count,
