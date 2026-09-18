@@ -49,6 +49,10 @@ export class StubRecordingSession implements RecordingSession {
     this.calls.push({ method: 'screenshot', args: path });
   }
 
+  async moveCursorTo(_selector: string): Promise<void> {
+    // Stub sessions have no rendered cursor; nothing to move.
+  }
+
   async close(): Promise<void> {
     /* no-op */
   }
