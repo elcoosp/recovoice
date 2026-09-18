@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import type { CanvasLike } from './canvas-types.js';
 
 let cachedModule: unknown = null;
@@ -7,7 +8,7 @@ function loadModule(): unknown {
   if (cachedModule) return cachedModule;
   if (cachedError) throw cachedError;
   try {
-    const req = require('node:module').createRequire(import.meta.url);
+    const req = createRequire(import.meta.url);
     cachedModule = req('@napi-rs/canvas');
     return cachedModule;
   } catch (err) {
