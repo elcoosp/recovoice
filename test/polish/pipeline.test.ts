@@ -23,7 +23,7 @@ describe('analyzePolishing', () => {
         { t: 900, x: 100, y: 100, type: 'move' },
         { t: 1200, x: 500, y: 400, type: 'move' },
       ]),
-      {},
+      { autoZoom: { minRegionStartMs: 0 } },
     );
     expect(analysis.zoomRegions.length).toBeGreaterThanOrEqual(1);
   });
@@ -38,7 +38,7 @@ describe('analyzePolishing', () => {
         { t: 2900, x: 900, y: 600, type: 'move' },
         { t: 3200, x: 900, y: 600, type: 'move' },
       ]),
-      {},
+      { autoZoom: { minRegionStartMs: 0 } },
     );
     expect(analysis.zoomRegions.length).toBeGreaterThanOrEqual(2);
     expect(analysis.transitions.length).toBeGreaterThanOrEqual(1);
@@ -66,7 +66,7 @@ describe('analyzePolishing', () => {
         { t: 2900, x: 900, y: 600, type: 'move' },
         { t: 3200, x: 900, y: 600, type: 'move' },
       ]),
-      { connectedTransitions: false },
+      { connectedTransitions: false, autoZoom: { minRegionStartMs: 0 } },
     );
     expect(analysis.transitions).toEqual([]);
     expect(analysis.zoomRegions.length).toBeGreaterThanOrEqual(2);
@@ -80,7 +80,7 @@ describe('analyzePolishing', () => {
         { t: 900, x: 100, y: 100, type: 'move' },
         { t: 1200, x: 500, y: 400, type: 'move' },
       ]),
-      { autoZoom: { defaultDepth: 3 } },
+      { autoZoom: { defaultDepth: 3, minRegionStartMs: 0 } },
     );
     expect(analysis.zoomRegions.length).toBeGreaterThanOrEqual(1);
     expect(analysis.zoomRegions[0]!.depth).toBe(3);
