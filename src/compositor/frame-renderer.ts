@@ -8,6 +8,7 @@ import type {
   BackgroundConfig,
   FrameConfig,
 } from '../types/recording.js';
+import type { CaptionStyle } from '../types/script.js';
 
 export interface RenderFrameInput {
   video: unknown;
@@ -18,6 +19,8 @@ export interface RenderFrameInput {
   background: BackgroundConfig;
   frame: Required<FrameConfig>;
   cursorStyle?: CursorStyle;
+  /** Active caption cue to burn onto this frame, if any. */
+  caption?: { text: string; style?: CaptionStyle } | null;
   /** Zoom motion blur radius in px; 0 disables. */
   zoomBlurRadius?: number;
   /**
@@ -66,6 +69,7 @@ export function renderFrame(
   const rect = computeFrameRect(canvas, input);
   drawFrame(ctx, input, rect);
   drawCursor(ctx, input, rect);
+  drawCaption(ctx, input.caption ?? null, rect);
 }
 
 interface FrameRect {
@@ -239,6 +243,90 @@ function drawArrow(
   ctx.closePath();
   ctx.fill();
   ctx.restore();
+}
+
+const DEFAULT_CAPTION_FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
+
+function drawCaption(
+  ctx: CanvasRenderingContext2DLike,
+  caption: { text: string; style?: CaptionStyle } | null,
+  rect: FrameRect,
+): void {
+  if (!caption || !caption.text.trim()) return;
+
+  const style = caption.style ?? {};
+  const fontSize = style.size ?? 26;
+  const fontFamily = style.font ?? DEFAULT_CAPTION_FONT;
+  const color = style.color ?? '#ffffff';
+  const background = style.background ?? 'rgba(0, 0, 0, 0.55)';
+  const position = style.position ?? 'bottom';
+
+  ctx.save();
+  ctx.font = `600 ${fontSize}px ${fontFamily}`;
+
+  const maxWidth = Math.max(60, rect.width - 48);
+  const lines = wrapCaptionText(ctx, caption.text, maxWidth, 2);
+  const lineHeight = Math.round(fontSize * 1.4);
+  const pillWidth =
+    Math.max(0, ...lines.map((l) => ctx.measureText(l).width)) + 32;
+  const pillHeight = lines.length * lineHeight + 20;
+
+  let centerX = rect.x + rect.width / 2;
+  const minX = rect.x + 8;
+  const maxX = rect.x + rect.width - 8;
+  centerX = Math.max(minX + pillWidth / 2, Math.min(maxX - pillWidth / 2, centerX));
+
+  let pillY: number;
+  if (position === 'top') {
+    pillY = rect.y + 22;
+  } else if (position === 'center') {
+    pillY = rect.y + rect.height / 2;
+  } else {
+    pillY = rect.y + rect.height - pillHeight - 24;
+  }
+
+  ctx.beginPath();
+  roundRectPath(ctx, centerX - pillWidth / 2, pillY, pillWidth, pillHeight, 10);
+  ctx.fillStyle = background;
+  ctx.fill();
+
+  ctx.fillStyle = color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  let textY = pillY + pillHeight / 2 - (lines.length * lineHeight) / 2 + lineHeight / 2;
+  for (const line of lines) {
+    ctx.fillText(line, centerX, textY);
+    textY += lineHeight;
+  }
+  ctx.restore();
+}
+
+function wrapCaptionText(
+  ctx: CanvasRenderingContext2DLike,
+  text: string,
+  maxWidth: number,
+  maxLines: number,
+): string[] {
+  const words = text.split(/\s+/);
+  const lines: string[] = [];
+  let current = '';
+
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (ctx.measureText(candidate).width <= maxWidth) {
+      current = candidate;
+      continue;
+    }
+    if (current) {
+      lines.push(current);
+      if (lines.length >= maxLines) break;
+      current = word;
+    } else {
+      current = word.slice(0, Math.max(1, maxWidth)) ;
+    }
+  }
+  if (lines.length < maxLines && current) lines.push(current);
+  return lines.slice(0, maxLines);
 }
 
 function drawArrowAtOrigin(
