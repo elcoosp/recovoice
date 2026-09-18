@@ -32,7 +32,7 @@ export function runDoctor(): DoctorReport {
     fix: 'Run: pnpm add @srsholmes/tauri-playwright',
   }));
 
-  checks.push(checkBinary('edge-tts', ['--version'], {
+  checks.push(checkBinary(process.env.RECOVOICE_EDGE_TTS ?? 'edge-tts', ['--version'], {
     fix: 'Install edge-tts: pip install edge-tts (optional if using Kokoro)',
   }));
 
@@ -62,8 +62,7 @@ function checkBinary(
 
 function checkNodeModule(name: string, hints: { fix?: string }): Check {
   try {
-    const req = require('node:module').createRequire(import.meta.url);
-    req.resolve(name);
+    import.meta.resolve(name);
     return { name, ok: true, message: `${name} is installed` };
   } catch {
     const check: Check = {
