@@ -27,6 +27,11 @@ const autoZoomSchema = z.object({
   dwellRadiusPx: z.number().positive().optional(),
   minClickCluster: z.number().int().positive().optional(),
   clickClusterTimeMs: z.number().positive().optional(),
+  minClickRegionMs: z.number().positive().optional(),
+  maxDwellMs: z.number().positive().optional(),
+  minRegionStartMs: z.number().nonnegative().optional(),
+  maxRegionMs: z.number().positive().optional(),
+  minGapBetweenRegionsMs: z.number().nonnegative().optional(),
   defaultDepth: z.number().positive().max(10).optional(),
 });
 
