@@ -6,6 +6,10 @@ import { Recovoice } from './recovoice.js';
 import { createTTSProvider } from './tts/factory.js';
 import { createTauriPlaywrightAdapter } from './recording/tauri-playwright-adapter.js';
 import { createPolishCompositor } from './compositor/polish-compositor.js';
+import { createPassthroughCompositor } from './compositor/passthrough-compositor.js';
+import { resolveFFmpegPath } from './config/env.js';
+import type { PolishConfig } from './types/recording.js';
+import type { Script } from './types/script.js';
 
 const pkg = { version: '0.1.0' };
 
@@ -23,7 +27,7 @@ program
   .option('--check', 'Validate the script only; no execution')
   .option('--dry-run', 'Show planned actions without executing')
   .option('--voiceover-only', 'Only regenerate voiceover and captions (skip recording)')
-  .option('--tts <provider>', 'TTS provider (mock|kokoro|edge)', 'kokoro')
+  .option('--tts <provider>', 'TTS provider (auto|mock|kokoro|edge)', 'auto')
   .option('--kokoro-url <url>', 'Kokoro server URL', 'http://localhost:8880')
   .option('--config <path>', 'Path to config file')
   .option('--confirm', 'Prompt before incurring TTS costs')
@@ -35,12 +39,50 @@ program
       process.exit(2);
     }
 
-    const ttsProvider = createTTSProvider({
-      provider: opts.tts as 'mock' | 'kokoro' | 'edge',
-      kokoroUrl: String(opts.kokoroUrl),
-    });
+    const config = {
+      configCwd: process.cwd(),
+      ...(typeof opts.config === 'string' ? { configPath: opts.config } : {}),
+      cliOverrides: {
+        fps: Number(opts.fps),
+        ...(opts.polish === false ? { polish: {} } : {}),
+      },
+    };
 
-    const recordingAdapter = createTauriPlaywrightAdapter();
+    // Pre-flight: load the merged script (frontmatter + config) so we can
+    // pick the TTS provider and typing speed before wiring the session.
+    const preflight = new Recovoice({
+      script: absoluteScript,
+      recordingAdapter: createTauriPlaywrightAdapter(),
+      config,
+    });
+    let meta: Script | undefined;
+    try {
+      meta = await preflight.loadScriptMeta();
+    } catch (err) {
+      process.stderr.write(
+        `warning: could not load script metadata (${(err as Error).message}); ` +
+          'falling back to defaults\n',
+      );
+    }
+
+    const ttsName = resolveProviderName(
+      opts.tts,
+      meta?.frontmatter.voiceover?.provider,
+      'mock',
+    );
+    const ttsProvider =
+      ttsName === 'edge'
+        ? createTTSProvider({
+            provider: 'edge',
+            edgeBinaryPath: process.env.RECOVOICE_EDGE_TTS,
+          })
+        : createTTSProvider({
+            provider: ttsName,
+            kokoroUrl: String(opts.kokoroUrl),
+          });
+
+    const typingSpeedMs = meta?.frontmatter.typingSpeed ?? 50;
+    const recordingAdapter = createTauriPlaywrightAdapter({ typingSpeedMs });
 
     if (opts.confirm) {
       process.stdout.write(
@@ -57,23 +99,27 @@ program
       output: String(opts.output),
       recordingAdapter,
       ttsProvider,
+      kokoroUrl: String(opts.kokoroUrl),
       voiceoverOnly: Boolean(opts.voiceoverOnly),
-      config: {
-        configCwd: process.cwd(),
-        ...(typeof opts.config === 'string' ? { configPath: opts.config } : {}),
-        cliOverrides: {
-          fps: Number(opts.fps),
-          ...(opts.polish === false ? { polish: {} } : {}),
-        },
-      },
-      compositorFactory: (result) =>
-        createPolishCompositor({
+      config,
+      compositorFactory: (result) => {
+        const usePolish = opts.polish !== false;
+        if (!usePolish) {
+          return createPassthroughCompositor({
+            ffmpegPath: resolveFFmpegPath(),
+          });
+        }
+        return createPolishCompositor({
           durationMs: result.durationMs,
           fps: Number(opts.fps),
           telemetry: result.telemetry,
           smoothingFactor: 0.3,
-          usePolish: opts.polish !== false,
-        }),
+          usePolish,
+          burn: result.burn,
+          polish: (result.polish as PolishConfig | undefined),
+          ffmpegPath: resolveFFmpegPath(),
+        });
+      },
     });
 
     if (opts.check) {
@@ -131,3 +177,25 @@ program.parseAsync(process.argv).catch((err) => {
   process.stderr.write(`error: ${(err as Error).message}\n`);
   process.exit(1);
 });
+
+type TTSProviderName = 'mock' | 'kokoro' | 'edge';
+
+/**
+ * Resolve the effective TTS provider. `--tts auto` (the default) reads the
+ * script frontmatter; an explicit flag wins over frontmatter.
+ */
+function resolveProviderName(
+  flag: unknown,
+  frontmatterProvider: string | undefined,
+  fallback: TTSProviderName,
+): TTSProviderName {
+  const raw = String(flag ?? 'auto');
+  if (raw !== 'auto') {
+    if (raw === 'mock' || raw === 'kokoro' || raw === 'edge') return raw;
+    throw new Error(`Invalid --tts provider: ${raw} (expected auto|mock|kokoro|edge)`);
+  }
+  if (frontmatterProvider === 'kokoro' || frontmatterProvider === 'edge') {
+    return frontmatterProvider;
+  }
+  return fallback;
+}
