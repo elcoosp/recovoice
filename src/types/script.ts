@@ -1,9 +1,12 @@
+import type { PolishConfig } from './recording.js';
+
 export interface Frontmatter {
   viewport?: { width: number; height: number };
   typingSpeed?: number;
   fps?: number;
   voiceover?: VoiceoverConfig;
   captions?: CaptionConfig;
+  polish?: PolishConfig;
   variables?: VariableMap;
 }
 
