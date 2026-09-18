@@ -89,8 +89,12 @@ describe('executeTimedActions', () => {
       },
     });
 
-    // Action 1 at 100ms, action 2 at 300ms -> sleep 100 then 200
-    expect(sleeps.slice(0, 2)).toEqual([100, 200]);
+    // Action 1 at 100ms, action 2 at 300ms -> sleep 100 then 200. A
+    // human "think" pause is injected between the anchor wait and the action.
+    expect(sleeps[0]).toBe(100);
+    expect(sleeps[0 + 1]).toBeGreaterThanOrEqual(80);
+    expect(sleeps[0 + 1]).toBeLessThanOrEqual(260);
+    expect(sleeps[2]).toBe(200);
   });
 
   it('adds inter-segment gap after the last word', async () => {
@@ -128,8 +132,12 @@ describe('executeTimedActions', () => {
       },
     });
 
-    // No sleep before the action (anchor 0), but sleep after for the segment
-    expect(sleeps).toEqual([700]);
+    // No sleep before the action (anchor 0), a think pause, then the rest
+    // of the segment duration + gap.
+    expect(sleeps).toHaveLength(2);
+    expect(sleeps[0]).toBeGreaterThanOrEqual(80);
+    expect(sleeps[0]).toBeLessThanOrEqual(260);
+    expect(sleeps[1]).toBe(700);
   });
 
   it('uses default sleep when none is injected', async () => {
