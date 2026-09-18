@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, extname } from 'node:path';
+import { resolveFFmpegPath } from '../config/env.js';
 
 export interface VoiceoverInput {
   path: string;
@@ -21,7 +22,7 @@ export async function mixVoiceovers(
   outputPath: string,
   options: MixOptions = {},
 ): Promise<void> {
-  const ffmpeg = options.ffmpegPath ?? 'ffmpeg';
+  const ffmpeg = options.ffmpegPath ?? resolveFFmpegPath();
   mkdirSync(dirname(outputPath), { recursive: true });
 
   const validated = inputs.filter((vo) => {
