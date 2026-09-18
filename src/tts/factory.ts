@@ -18,7 +18,9 @@ export function createTTSProvider(options: TTSFactoryOptions): TTSProvider {
     case 'edge': {
       const opts = options.edgeBinaryPath
         ? { binaryPath: options.edgeBinaryPath }
-        : {};
+        : process.env.RECOVOICE_EDGE_TTS
+          ? { binaryPath: process.env.RECOVOICE_EDGE_TTS }
+          : {};
       return new EdgeTTSProvider(opts);
     }
     case 'mock':
