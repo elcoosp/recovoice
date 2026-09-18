@@ -7,6 +7,12 @@ export interface RecordingSession {
   executeAction(action: Action): Promise<void>;
   collectTelemetry(): Promise<CursorTelemetry>;
   /**
+   * Ease the pointer to the visual center of a selector before an action.
+   * Optional: implementations that cannot synthesize cursor motion may omit
+   * it, and the timed executor will skip the sweep.
+   */
+  moveCursorTo?(selector: string): Promise<void>;
+  /**
    * Capture a screenshot to the given path. Used to preserve diagnostic
    * context when an action fails. Implementations may no-op if unsupported.
    */

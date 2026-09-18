@@ -60,6 +60,16 @@ export interface PolishConfig {
   background?: BackgroundConfig;
   frame?: FrameConfig;
   captionStyle?: CaptionStyle;
+  /**
+   * Output canvas size. A number scales the source viewport; an object sets
+   * the exact dimensions. Defaults to the recorded viewport size.
+   */
+  output?: number | { width: number; height: number };
+  /**
+   * Video encoder for polished output. Defaults to h264_videotoolbox when
+   * available, falling back to libx264.
+   */
+  encoder?: 'auto' | 'videotoolbox' | 'libx264';
 }
 
 export interface AutoZoomConfig {
@@ -67,6 +77,11 @@ export interface AutoZoomConfig {
   dwellRadiusPx?: number;
   minClickCluster?: number;
   clickClusterTimeMs?: number;
+  minClickRegionMs?: number;
+  maxDwellMs?: number;
+  minRegionStartMs?: number;
+  maxRegionMs?: number;
+  minGapBetweenRegionsMs?: number;
   defaultDepth?: number;
 }
 
