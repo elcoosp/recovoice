@@ -52,6 +52,11 @@ export interface CanvasRenderingContext2DLike {
   createImageData?(sw: number, sh: number): ImageDataLike;
   getImageData?(sx: number, sy: number, sw: number, sh: number): ImageDataLike;
   putImageData?(imageData: ImageDataLike, dx: number, dy: number): void;
+  font: string;
+  textAlign: string;
+  textBaseline: string;
+  measureText(text: string): { width: number };
+  fillText(text: string, x: number, y: number): void;
   filter: string;
   globalAlpha: number;
   fillStyle: string | CanvasGradientLike;
