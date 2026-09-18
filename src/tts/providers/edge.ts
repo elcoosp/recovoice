@@ -9,12 +9,6 @@ export interface EdgeTTSOptions {
   binaryPath?: string;
 }
 
-interface EdgeWordBoundary {
-  offset: number;
-  duration: number;
-  text: string;
-}
-
 export class EdgeTTSProvider implements TTSProvider {
   private readonly binaryPath: string;
 
@@ -56,16 +50,86 @@ export class EdgeTTSProvider implements TTSProvider {
     const { readFileSync, unlinkSync } = await import('node:fs');
     const audio = readFileSync(audioPath);
     const subtitleRaw = readFileSync(jsonPath, 'utf-8');
-    const boundaries = JSON.parse(subtitleRaw) as EdgeWordBoundary[];
-
-    const timings: WordTiming[] = boundaries.map((b) => ({
-      word: b.text.trim(),
-      startMs: Math.round(b.offset / 10_000),
-      endMs: Math.round((b.offset + b.duration) / 10_000),
-    }));
+    const timings = parseSubtitleTimings(subtitleRaw);
 
     try { unlinkSync(audioPath); unlinkSync(jsonPath); } catch { /* ignore */ }
 
     return { audio, format: 'mp3', timings };
   }
+}
+
+const SRT_CUE_RE =
+  /(\d{2}):(\d{2}):(\d{2}[,.]\d{3})\s*-->\s*(\d{2}):(\d{2}):(\d{2}[,.]\d{3})/g;
+
+/**
+ * Converts the subtitle output of `edge-tts` into word timings. Newer edge-tts
+ * versions write an SRT stream even when a `.json` path is requested; older
+ * versions wrote a JSON array of word boundaries. Accept both.
+ */
+function parseSubtitleTimings(raw: string): WordTiming[] {
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed.flatMap((b) => {
+        const word = String(b.text ?? '').trim();
+        if (!word) return [];
+        return {
+          word,
+          startMs: Math.round(Number(b.offset) / 10_000),
+          endMs: Math.round((Number(b.offset) + Number(b.duration)) / 10_000),
+        };
+      });
+    }
+  } catch {
+    // Not JSON; parse as SRT below.
+  }
+
+  return srtToWordTimings(raw);
+}
+
+function srtToWordTimings(raw: string): WordTiming[] {
+  const cues: Array<{ startMs: number; endMs: number; text: string }> = [];
+  const blocks = raw.split(/\r?\n\r?\n/);
+  for (const block of blocks) {
+    const lines = block.split(/\r?\n/).map((l) => l.trim());
+    if (lines.length < 2) continue;
+    const timing = lines.find((l) => l.includes('-->'));
+    if (!timing) continue;
+    SRT_CUE_RE.lastIndex = 0;
+    const m = SRT_CUE_RE.exec(timing);
+    if (!m) continue;
+    const startMs = timestampMs(m[1]!, m[2]!, m[3]!);
+    const endMs = timestampMs(m[4]!, m[5]!, m[6]!);
+    const text = lines
+      .slice(lines.indexOf(timing) + 1)
+      .join(' ')
+      .trim();
+    if (!text) continue;
+    cues.push({ startMs, endMs, text });
+  }
+
+  const timings: WordTiming[] = [];
+  for (const cue of cues) {
+    const words = cue.text.split(/\s+/).filter(Boolean);
+    const span = Math.max(0, cue.endMs - cue.startMs);
+    const step = words.length > 0 ? span / words.length : 0;
+    words.forEach((word, i) => {
+      timings.push({
+        word,
+        startMs: cue.startMs + Math.round(step * i),
+        endMs: cue.startMs + Math.round(step * (i + 1)),
+      });
+    });
+  }
+  return timings;
+}
+
+function timestampMs(h: string, m: string, s: string): number {
+  const [sec = '0', ms = '000'] = s.split(/[,.]/);
+  return (
+    Number.parseInt(h, 10) * 3_600_000 +
+    Number.parseInt(m, 10) * 60_000 +
+    Number.parseInt(sec, 10) * 1000 +
+    Number.parseInt(ms.padEnd(3, '0'), 10)
+  );
 }
