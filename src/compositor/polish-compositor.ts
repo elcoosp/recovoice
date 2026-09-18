@@ -1,6 +1,8 @@
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { openSync, writeSync, closeSync, rmSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { Compositor, CompositorOptions } from '../recording/types.js';
 import type { CursorTelemetry, PolishConfig } from '../types/recording.js';
 import { analyzePolishing } from '../polish/pipeline.js';
@@ -15,14 +17,31 @@ import {
   isNapiCanvasAvailable,
 } from './napi-canvas.js';
 import { computeZoomBlurRadius } from '../polish/motion-blur.js';
-import { buildFFmpegSubtitleStyle } from '../caption/style.js';
-import type { CaptionStyle } from '../types/script.js';
+import { parseSrt, type SrtCue } from '../caption/srt.js';
 import {
   runAnalyzeHooks,
   runTransformHooks,
   type PolishPlugin,
 } from '../polish/plugin.js';
 import type { CanvasLike } from './canvas-types.js';
+import { resolveFFmpegPath } from '../config/env.js';
+
+export interface PolishCompositorOptions {
+  ffmpegPath?: string;
+  outputSize?: { width: number; height: number };
+  durationMs: number;
+  fps: number;
+  telemetry: CursorTelemetry;
+  polish?: PolishConfig;
+  smoothingFactor?: number;
+  usePolish?: boolean;
+  /**
+   * Burn captions onto the video via the canvas renderer. Defaults to true.
+   */
+  burn?: boolean;
+  /** Optional polish plugins applied before rendering each frame. */
+  plugins?: PolishPlugin[];
+}
 
 export interface PolishCompositorOptions {
   ffmpegPath?: string;
@@ -43,13 +62,71 @@ export function createPolishCompositor(
   return new PolishCompositor(options);
 }
 
+function captionForTime(cues: SrtCue[], tMs: number): SrtCue | null {
+  for (const cue of cues) {
+    if (tMs < cue.startMs) break;
+    if (tMs <= cue.endMs) return cue;
+  }
+  return null;
+}
+
 class PolishCompositor implements Compositor {
   private readonly opts: PolishCompositorOptions;
   private readonly ffmpegPath: string;
 
   constructor(options: PolishCompositorOptions) {
     this.opts = options;
-    this.ffmpegPath = options.ffmpegPath ?? 'ffmpeg';
+    this.ffmpegPath = options.ffmpegPath ?? resolveFFmpegPath();
+  }
+
+  private cachedEncoders: string[] | null = null;
+
+  private hasFFmpegEncoder(name: string): boolean {
+    if (this.cachedEncoders === null) {
+      let encoders: string[];
+      try {
+        const out = execFileSync(
+          this.ffmpegPath,
+          ['-hide_banner', '-encoders'],
+          { encoding: 'utf8' },
+        );
+        encoders = out.split('\n');
+      } catch {
+        encoders = [];
+      }
+      this.cachedEncoders = encoders;
+    }
+    return this.cachedEncoders.some((line) => {
+      const idx = line.indexOf(name);
+      return idx !== -1 && /^\s{2}/.test(line.slice(0, idx));
+    });
+  }
+
+  private pickVideoCodec(polish: PolishConfig | undefined): string {
+    const want = polish?.encoder ?? 'auto';
+    if (want === 'libx264') return 'libx264';
+    if (want === 'videotoolbox') return 'h264_videotoolbox';
+    return this.hasFFmpegEncoder('h264_videotoolbox')
+      ? 'h264_videotoolbox'
+      : 'libx264';
+  }
+
+  private deriveOutputSize(viewport: {
+    width: number;
+    height: number;
+  }): { width: number; height: number } {
+    const out = this.opts.polish?.output;
+    if (out && typeof out === 'object') {
+      return {
+        width: Math.max(2, Math.round(out.width)),
+        height: Math.max(2, Math.round(out.height)),
+      };
+    }
+    const scale = typeof out === 'number' && out > 0 ? out : 1;
+    return {
+      width: Math.max(2, Math.round(viewport.width * scale)),
+      height: Math.max(2, Math.round(viewport.height * scale)),
+    };
   }
 
   async compose(opts: CompositorOptions): Promise<void> {
@@ -65,8 +142,8 @@ class PolishCompositor implements Compositor {
     }
 
     const shouldPolish = this.opts.usePolish !== false;
-    const outputSize = this.opts.outputSize ?? { width: 1920, height: 1080 };
     const viewport = this.opts.telemetry.viewport;
+    const outputSize = this.opts.outputSize ?? this.deriveOutputSize(viewport);
 
     const baseAnalysis = shouldPolish
       ? analyzePolishing(this.opts.telemetry, this.opts.polish ?? {})
@@ -107,6 +184,12 @@ class PolishCompositor implements Compositor {
 
     if (schedules.length === 0) {
       throw new Error('Polish compositor produced zero frames to render');
+    }
+
+    const burn = this.opts.burn !== false;
+    let cues: SrtCue[] = [];
+    if (burn && opts.captionsPath && existsSync(opts.captionsPath)) {
+      cues = parseSrt(opts.captionsPath);
     }
 
     const decoder = this.startFrameDecoder(
@@ -174,9 +257,16 @@ class PolishCompositor implements Compositor {
           cursorStyle: DEFAULT_CURSOR_STYLE,
           zoomBlurRadius,
         };
+        if (cues.length > 0) {
+          const cue = captionForTime(cues, schedule.tMs);
+          renderInput.caption = cue
+            ? { text: cue.text, style: this.opts.polish?.captionStyle }
+            : null;
+        } else {
+          renderInput.caption = null;
+        }
         if (wallpaper) renderInput.wallpaper = wallpaper;
         renderFrame(canvas, renderInput);
-
         const rgba = this.readRgbaFromCanvas(
           canvasCtx,
           outputSize.width,
@@ -287,13 +377,78 @@ class PolishCompositor implements Compositor {
     finish: () => Promise<void>;
     kill: () => void;
   } {
+    const tmpVideo = join(
+      tmpdir(),
+      `recovoice-polish-${process.pid}-${Date.now()}.raw`,
+    );
+    const fd = openSync(tmpVideo, 'w');
+    const self = this;
+    return {
+      writeFrame(buf: Buffer): Promise<void> {
+        return new Promise((resolve, reject) => {
+          try {
+            writeSync(fd, buf);
+            resolve();
+          } catch (err) {
+            reject(err);
+          }
+        });
+      },
+      finish(): Promise<void> {
+        return new Promise((resolve, reject) => {
+          try {
+            closeSync(fd);
+          } catch {
+            /* ignore */
+          }
+          self
+            .encodeRawFile(opts, size, fps, tmpVideo)
+            .then(() => {
+              try {
+                rmSync(tmpVideo, { force: true });
+              } catch {
+                /* ignore */
+              }
+              resolve();
+            })
+            .catch((err) => {
+              try {
+                rmSync(tmpVideo, { force: true });
+              } catch {
+                /* ignore */
+              }
+              reject(err);
+            });
+        });
+      },
+      kill(): void {
+        try {
+          closeSync(fd);
+        } catch {
+          /* ignore */
+        }
+        try {
+          rmSync(tmpVideo, { force: true });
+        } catch {
+          /* ignore */
+        }
+      },
+    };
+  }
+
+  private encodeRawFile(
+    opts: CompositorOptions,
+    size: { width: number; height: number },
+    fps: number,
+    rawPath: string,
+  ): Promise<void> {
     const args: string[] = [
       '-y',
       '-f', 'rawvideo',
       '-pix_fmt', 'rgba',
       '-s', `${size.width}x${size.height}`,
       '-r', String(fps),
-      '-i', '-',
+      '-i', rawPath,
     ];
 
     const hasAudio = opts.audioTrackPath
@@ -307,22 +462,8 @@ class PolishCompositor implements Compositor {
       }
     }
 
-    if (opts.captionsPath && existsSync(opts.captionsPath)) {
-      const escaped = opts.captionsPath
-        .replace(/\\/g, '\\\\')
-        .replace(/:/g, '\\:');
-      const style = buildFFmpegSubtitleStyle(
-        this.opts.polish && 'captionStyle' in this.opts.polish
-          ? (this.opts.polish as { captionStyle?: CaptionStyle }).captionStyle
-          : undefined,
-      );
-      args.push(
-        '-vf',
-        `subtitles='${escaped}':force_style='${style}'`,
-      );
-    }
-
-    args.push('-c:v', 'libx264', '-pix_fmt', 'yuv420p');
+    const codec = this.pickVideoCodec(this.opts.polish);
+    args.push('-c:v', codec, '-pix_fmt', 'yuv420p');
 
     if (hasAudio) {
       args.push('-map', '0:v', '-map', '1:a', '-c:a', 'aac', '-shortest');
@@ -332,33 +473,16 @@ class PolishCompositor implements Compositor {
 
     args.push(opts.output);
 
-    const proc = spawn(this.ffmpegPath, args, {
-      stdio: ['pipe', 'ignore', 'inherit'],
+    return new Promise((resolve, reject) => {
+      const proc = spawn(this.ffmpegPath, args, {
+        stdio: ['ignore', 'ignore', 'inherit'],
+      });
+      proc.on('error', (err) => reject(err));
+      proc.on('exit', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`ffmpeg encoder exited with code ${code}`));
+      });
     });
-
-    return {
-      writeFrame(buf: Buffer): Promise<void> {
-        return new Promise((resolve, reject) => {
-          const ok = proc.stdin.write(buf, (err) => {
-            if (err) reject(err);
-            else resolve();
-          });
-          if (!ok) proc.stdin.once('drain', () => undefined);
-        });
-      },
-      finish(): Promise<void> {
-        return new Promise((resolve, reject) => {
-          proc.stdin.end();
-          proc.on('exit', (code) => {
-            if (code === 0) resolve();
-            else reject(new Error(`ffmpeg encoder exited with code ${code}`));
-          });
-        });
-      },
-      kill(): void {
-        try { proc.kill('SIGTERM'); } catch { /* ignore */ }
-      },
-    };
   }
 }
 
