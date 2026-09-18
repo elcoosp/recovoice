@@ -28,10 +28,17 @@ function makeFakePage(): FakePage {
     },
     async evaluate<T>(_fn: () => T) {
       calls.push({ method: 'evaluate', args: [_fn] });
-      return [
-        { t: 0, x: 100, y: 100, type: 'move' },
-        { t: 500, x: 200, y: 150, type: 'click' },
-      ] as unknown as T;
+      const evalIndex = calls.filter((c) => c.method === 'evaluate').length;
+      if (evalIndex === 1) {
+        return {
+          events: [
+            { t: 0, x: 100, y: 100, type: 'move' },
+            { t: 500, x: 200, y: 150, type: 'click' },
+          ],
+          timebase: 0,
+        } as unknown as T;
+      }
+      return { width: 800, height: 600 } as unknown as T;
     },
     async click(selector) {
       calls.push({ method: 'click', args: [selector] });
