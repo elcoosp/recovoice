@@ -1,5 +1,10 @@
 import { mkdirSync, writeFileSync, rmSync, existsSync, renameSync } from 'node:fs';
-import { join } from 'node:path';
+const debugLog = (phase: string) => {
+  if (process.env.RECOVOICE_DEBUG) {
+    console.error(`[recovoice:${new Date().toISOString()}] ${phase}`);
+  }
+};
+import { dirname, join, resolve } from 'node:path';
 import { parseScript } from './parser/parser.js';
 import { ParseError } from './parser/errors.js';
 import { AudioCache, hashSynthesisInput } from './cache/audio-cache.js';
@@ -21,6 +26,18 @@ export interface RecovoiceCompositorResult {
   captionsPath?: string;
   telemetry: CursorTelemetry;
   durationMs: number;
+  /**
+   * Frame rate the raw video was stitched at. The telemetry is aligned to this
+   * timeline so the compositor decodes with the same rate.
+   */
+  fps: number;
+  /**
+   * Video time (ms) at which each recorded source frame should appear. When
+   * set, the compositor stretches the capture to this timeline (narration
+   * length) instead of consuming frames one-to-one, so the destination video
+   * can be longer or shorter than the raw video's frame count implies.
+   */
+  frameTimesMs?: number[];
   /** Whether captions should be burned onto the video (from frontmatter). */
   burn?: boolean;
   /** Raw polish config from frontmatter, for the compositor factory. */
@@ -143,7 +160,7 @@ export class Recovoice {
 
   async run(): Promise<RecovoiceResult> {
     const script = await this.loadMergedScript();
-    const outputDir = this.opts.output ?? './output';
+    const outputDir = resolve(this.opts.output ?? './output');
     const stagingDir = join(outputDir, '.tmp');
     const rawDir = join(stagingDir, 'raw');
     const assetsDir = join(stagingDir, 'assets');
@@ -153,6 +170,9 @@ export class Recovoice {
     const rawVideoPath = join(rawDir, 'video.mp4');
     const srtPath = join(outputDir, 'captions.srt');
     const vttPath = join(outputDir, 'captions.vtt');
+
+    let session: RecordingSession | undefined;
+    let recordingStarted = false;
 
     try {
       mkdirSync(rawDir, { recursive: true });
@@ -194,21 +214,27 @@ export class Recovoice {
         };
       }
 
-      const session = await this.opts.recordingAdapter.launch({
+      session = await this.opts.recordingAdapter.launch({
         viewport: script.frontmatter.viewport ?? DEFAULT_VIEWPORT,
       });
+      debugLog('launch done');
 
       const fps = script.frontmatter.fps ?? DEFAULT_FPS;
       await session.startRecording({ path: rawDir, fps });
+      recordingStarted = true;
+      debugLog('startRecording done');
 
       const flatTimings = perSegmentTimings.reduce<WordTiming[]>(
         (acc, seg) => acc.concat(seg),
         [],
       );
       await this.executeTimedActions(session, script, flatTimings, outputDir);
+      debugLog('executeTimedActions done');
 
       const { video } = await session.stopRecording();
-      const telemetry = await session.collectTelemetry();
+      debugLog('stopRecording done');
+      let telemetry = await session.collectTelemetry();
+      debugLog('collectTelemetry done');
       await session.close();
 
       const voiceoverInputs = voiceovers.map((v) => ({
@@ -218,13 +244,40 @@ export class Recovoice {
 
       const durationMs = await this.resolveDurationMs(video, telemetry);
 
+      // The frame backend writes one PNG per captured frame and stitches them
+      // at a fixed `fps`. When the machine captures slower than real time the
+      // video is a compressed version of the wall clock, so remap the cursor
+      // telemetry from wall time into video time before composing, and stretch
+      // the capture to the narration duration so the voiceover is never cut.
+      const alignment = await this.alignTelemetryToVideo(telemetry, {
+        frameDir: dirname(video),
+        fps,
+        targetDurationMs: totalDurationMs,
+      });
+      telemetry = alignment.telemetry;
+      const composeDurationMs = alignment.composeDurationMs ?? durationMs;
+
+      if (process.env.RECOVOICE_DEBUG) {
+        try {
+          writeFileSync(
+            '/tmp/recovoice-aligned-telemetry.json',
+            JSON.stringify({ telemetry, durationMs: composeDurationMs }, null, 2),
+          );
+          debugLog(
+            `align: dumped ${telemetry.events.length} events to /tmp/recovoice-aligned-telemetry.json`,
+          );
+        } catch (err) {
+          debugLog(`align: dump failed: ${(err as Error).message}`);
+        }
+      }
+
       // Pre-mix voiceovers into a single audio track
       let audioTrackPath: string | undefined;
       if (voiceoverInputs.length > 0) {
         const { mixVoiceovers } = await import('./compositor/audio-mixer.js');
         audioTrackPath = join(stagingDir, 'mixed-audio.m4a');
         await mixVoiceovers(voiceoverInputs, audioTrackPath, {
-          totalDurationMs: Math.max(durationMs, totalDurationMs),
+          totalDurationMs: Math.max(composeDurationMs, totalDurationMs),
           ffmpegPath: resolveFFmpegPath(),
         });
       }
@@ -234,7 +287,9 @@ export class Recovoice {
         voiceovers: voiceoverInputs,
         captionsPath: existsSync(srtPath) ? srtPath : undefined,
         telemetry,
-        durationMs,
+        durationMs: composeDurationMs,
+        frameTimesMs: alignment.frameTimesMs,
+        fps,
         burn: script.frontmatter.captions?.burn ?? true,
         polish: script.frontmatter.polish,
       });
@@ -244,6 +299,7 @@ export class Recovoice {
         voiceovers: typeof voiceoverInputs;
         captionsPath?: string;
         audioTrackPath?: string;
+        frameTimesMs?: number[];
         output: string;
       } = {
         rawVideo: video,
@@ -252,6 +308,8 @@ export class Recovoice {
       };
       if (existsSync(srtPath)) composeOptions.captionsPath = srtPath;
       if (audioTrackPath) composeOptions.audioTrackPath = audioTrackPath;
+      if (alignment.frameTimesMs)
+        composeOptions.frameTimesMs = alignment.frameTimesMs;
 
       await compositor.compose(composeOptions);
 
@@ -272,6 +330,23 @@ export class Recovoice {
       };
       return result;
     } catch (err) {
+      // Best-effort: stop an in-progress recording and close the session so a
+      // failed run does not leave the recording backend stuck ("recording
+      // already in progress" on the next invocation).
+      if (session && recordingStarted) {
+        try {
+          await session.stopRecording();
+        } catch {
+          // ignore: best-effort cleanup
+        }
+      }
+      if (session) {
+        try {
+          await session.close();
+        } catch {
+          // ignore: best-effort cleanup
+        }
+      }
       // Clean up staging on failure; leave output dir without a final.mp4
       if (existsSync(stagingDir)) {
         try {
@@ -310,6 +385,81 @@ export class Recovoice {
       return Math.ceil(last.t + 1000);
     }
     return 5000;
+  }
+
+  /**
+   * Remap telemetry event times from the wall clock into video time using the
+   * recorded frame PNGs' capture timestamps, and normalize the captured frames
+   * onto a target duration.
+   *
+   * When the frame sequence is unavailable (e.g. non-frame backends), the
+   * telemetry is returned unchanged and no frame times are produced.
+   *
+   * `composeDurationMs` is the duration the compositor should render at: the
+   * normalized target when frames are available, otherwise undefined (the
+   * caller falls back to the probed raw duration).
+   */
+  private async alignTelemetryToVideo(
+    telemetry: CursorTelemetry,
+    opts: { frameDir: string; fps: number; targetDurationMs: number },
+  ): Promise<{
+    telemetry: CursorTelemetry;
+    frameTimesMs?: number[];
+    composeDurationMs?: number;
+  }> {
+    if (telemetry.events.length === 0 || !telemetry.wallBaseMs) {
+      debugLog(
+        `align: early return (events=${telemetry.events.length}, wallBase=${telemetry.wallBaseMs})`,
+      );
+      return { telemetry };
+    }
+    const {
+      readFrameCaptureTimes,
+      normalizeFrameVideoTimes,
+      resampleTelemetryToVideoTime,
+    } = await import('./recording/time-align.js');
+    const frameWallTimesMs = readFrameCaptureTimes(opts.frameDir);
+    if (!frameWallTimesMs) {
+      debugLog(`align: no frame times in ${opts.frameDir}`);
+      return { telemetry };
+    }
+    debugLog(
+      `align: frames=${frameWallTimesMs.length} spanMs=${Math.round(
+        frameWallTimesMs[frameWallTimesMs.length - 1]! - frameWallTimesMs[0]!,
+      )} targetMs=${Math.round(opts.targetDurationMs)}`,
+    );
+
+    const safeFps = opts.fps > 0 ? opts.fps : 1;
+    let frameTimesMs = normalizeFrameVideoTimes(
+      frameWallTimesMs,
+      opts.targetDurationMs,
+    );
+    if (frameTimesMs) {
+      // The normalized frames render at the narration length.
+      debugLog(`align: normalized to ${frameTimesMs.length} frames`);
+      return {
+        telemetry: resampleTelemetryToVideoTime(
+          telemetry,
+          frameWallTimesMs,
+          frameTimesMs,
+        ),
+        frameTimesMs,
+        composeDurationMs: Math.round(opts.targetDurationMs),
+      };
+    }
+    // No narration to normalize against (or degenerate capture): fall back to
+    // the plain constant-rate timeline `index / fps`.
+    frameTimesMs = frameWallTimesMs.map(
+      (_w, i) => (i / safeFps) * 1000,
+    );
+    return {
+      telemetry: resampleTelemetryToVideoTime(
+        telemetry,
+        frameWallTimesMs,
+        frameTimesMs,
+      ),
+      frameTimesMs,
+    };
   }
 
   private remapToFinalLocation(
