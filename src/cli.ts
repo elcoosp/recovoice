@@ -111,7 +111,7 @@ program
         }
         return createPolishCompositor({
           durationMs: result.durationMs,
-          fps: Number(opts.fps),
+          fps: result.fps ?? Number(opts.fps),
           telemetry: result.telemetry,
           smoothingFactor: 0.3,
           usePolish,
