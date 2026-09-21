@@ -36,6 +36,7 @@ function makeFakePage(): FakePage {
             { t: 500, x: 200, y: 150, type: 'click' },
           ],
           timebase: 0,
+          wallBase: 1000000,
         } as unknown as T;
       }
       return { width: 800, height: 600 } as unknown as T;
@@ -75,6 +76,22 @@ describe('createTauriPlaywrightAdapter', () => {
     expect(page.calls.some((c) => c.method === 'stopRecording')).toBe(true);
   });
 
+  it('clears a leftover in-progress recording before starting', async () => {
+    const page = makeFakePage();
+    const adapter = createTauriPlaywrightAdapter({ launch: async () => page });
+    const session = await adapter.launch({});
+    await session.startRecording({ path: '/tmp/raw', fps: 30 });
+    const stopBeforeStart = page.calls.findIndex(
+      (c) => c.method === 'stopRecording',
+    );
+    const startIndex = page.calls.findIndex(
+      (c) => c.method === 'startRecording',
+    );
+    // The self-heal stop must happen before the new recording starts.
+    expect(stopBeforeStart).toBeGreaterThan(-1);
+    expect(stopBeforeStart).toBeLessThan(startIndex);
+  });
+
   it('dispatches actions to the corresponding page method', async () => {
     const page = makeFakePage();
     const adapter = createTauriPlaywrightAdapter({ launch: async () => page });
@@ -101,5 +118,13 @@ describe('createTauriPlaywrightAdapter', () => {
     const telemetry = await session.collectTelemetry();
     expect(telemetry.events).toHaveLength(2);
     expect(telemetry.events[1]!.type).toBe('click');
+  });
+
+  it('carries the wall clock base along with the telemetry', async () => {
+    const page = makeFakePage();
+    const adapter = createTauriPlaywrightAdapter({ launch: async () => page });
+    const session = await adapter.launch({});
+    const telemetry = await session.collectTelemetry();
+    expect(telemetry.wallBaseMs).toBe(1000000);
   });
 });
