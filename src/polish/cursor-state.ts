@@ -10,6 +10,11 @@ export interface CursorFrameState {
   rotation: number;
   ghostCount: number;
   clickPulse: number;
+  /** Position of the most recent click, in viewport coordinates. */
+  clickX: number;
+  clickY: number;
+  /** 0..1 expanding click-ripple intensity (0 when idle). */
+  clickRipple: number;
 }
 
 export interface CursorStateOptions {
@@ -27,6 +32,7 @@ export interface CursorStateOptions {
 }
 
 const CLICK_PULSE_DURATION_MS = 250;
+const CLICK_RIPPLE_DURATION_MS = 600;
 const FRAME_MS = 16;
 
 export class CursorStateComputer {
@@ -71,6 +77,22 @@ export class CursorStateComputer {
 
     const latest = before[before.length - 1]!;
 
+    // A click pins the cursor to the target: the pointer lands decisively at
+    // the element it clicked, so text that types immediately after (which is
+    // only visible in the recorded picture, not in telemetry) never appears
+    // before the cursor is sitting on the field. Without this, spring
+    // smoothing would still be gliding into place while the input fills.
+    if (latest.type === 'click' && !this.opts.disableSmoothing) {
+      this.springX.setTarget(latest.x);
+      this.springX.position = latest.x;
+      this.springX.velocity = 0;
+      this.springY.setTarget(latest.y);
+      this.springY.position = latest.y;
+      this.springY.velocity = 0;
+      this.lastX = latest.x;
+      this.lastY = latest.y;
+    }
+
     if (this.opts.disableSmoothing) {
       const rawX = latest.x;
       const rawY = latest.y;
@@ -88,6 +110,9 @@ export class CursorStateComputer {
       const clickPulse = this.opts.disableClickPulse
         ? 0
         : this.computeClickPulse(tMs);
+      const ripple = this.opts.disableClickPulse
+        ? this.clickRippleIdle()
+        : this.computeClickRipple(tMs);
 
       this.lastX = rawX;
       this.lastY = rawY;
@@ -100,6 +125,9 @@ export class CursorStateComputer {
         rotation,
         ghostCount,
         clickPulse,
+        clickX: ripple.x,
+        clickY: ripple.y,
+        clickRipple: ripple.ripple,
       };
     }
 
@@ -129,6 +157,9 @@ export class CursorStateComputer {
     const clickPulse = this.opts.disableClickPulse
       ? 0
       : this.computeClickPulse(tMs);
+    const ripple = this.opts.disableClickPulse
+      ? this.clickRippleIdle()
+      : this.computeClickRipple(tMs);
 
     this.lastX = currentX;
     this.lastY = currentY;
@@ -141,7 +172,32 @@ export class CursorStateComputer {
       rotation,
       ghostCount,
       clickPulse,
+      clickX: ripple.x,
+      clickY: ripple.y,
+      clickRipple: ripple.ripple,
     };
+  }
+
+  private computeClickRipple(
+    tMs: number,
+  ): { x: number; y: number; ripple: number } {
+    let latest: CursorEvent | null = null;
+    for (const e of this.events) {
+      if (e.type === 'click' && e.t <= tMs) latest = e;
+    }
+    if (!latest) return this.clickRippleIdle();
+    const elapsed = tMs - latest.t;
+    if (elapsed >= CLICK_RIPPLE_DURATION_MS) return this.clickRippleIdle();
+    const progress = elapsed / CLICK_RIPPLE_DURATION_MS;
+    return {
+      x: latest.x,
+      y: latest.y,
+      ripple: Math.sin(Math.PI * progress),
+    };
+  }
+
+  private clickRippleIdle(): { x: number; y: number; ripple: number } {
+    return { x: 0, y: 0, ripple: 0 };
   }
 
   private computeClickPulse(tMs: number): number {
@@ -164,5 +220,8 @@ function hidden(): CursorFrameState {
     rotation: 0,
     ghostCount: 0,
     clickPulse: 0,
+    clickX: 0,
+    clickY: 0,
+    clickRipple: 0,
   };
 }
