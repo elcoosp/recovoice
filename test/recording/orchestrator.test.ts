@@ -10,6 +10,7 @@ import {
   StubCompositor,
   StubRecordingAdapter,
 } from '../../src/recording/stub-adapter.js';
+import type { RecordingSession } from '../../src/recording/types.js';
 
 const SCRIPT = `---
 fps: 30
@@ -238,6 +239,49 @@ describe('Recovoice.run', () => {
      });
     await expect(recovoice.run()).rejects.toThrow('launch failed');
     // Final output directory should not contain a final.mp4
+    expect(existsSync(join(outputDir, 'final.mp4'))).toBe(false);
+  });
+
+  it('stops the recording and closes the session when an action fails mid-run', async () => {
+    const calls: string[] = [];
+    const failingSession: RecordingSession = {
+      async startRecording() {
+        calls.push('startRecording');
+      },
+      async stopRecording() {
+        calls.push('stopRecording');
+        return { video: join(workDir, 'raw.mp4') };
+      },
+      async executeAction() {
+        calls.push('executeAction');
+        throw new Error('action failed');
+      },
+      async collectTelemetry() {
+        return {
+          events: [],
+          timebaseOrigin: 0,
+          viewport: { width: 1280, height: 800 },
+        };
+      },
+      async close() {
+        calls.push('close');
+      },
+    };
+    const adapter = { launch: async () => failingSession };
+    const recovoice = new Recovoice({
+      sleep: noopSleep,
+      script: scriptPath,
+      output: outputDir,
+      recordingAdapter: adapter,
+      ttsProvider: new MockTTSProvider(),
+      compositor: new StubCompositor(),
+    });
+    await expect(recovoice.run()).rejects.toThrow('action failed');
+    // The recording must not be left in-progress after a failed run.
+    expect(calls[0]).toBe('startRecording');
+    expect(calls).toContain('stopRecording');
+    expect(calls).toContain('close');
+    // Staging is cleaned up, no final video is published.
     expect(existsSync(join(outputDir, 'final.mp4'))).toBe(false);
   });
 });
