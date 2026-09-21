@@ -11,6 +11,12 @@ export interface CursorTelemetry {
   events: CursorEvent[];
   timebaseOrigin: number;
   viewport: { width: number; height: number };
+  /**
+   * Epoch milliseconds (Date.now) captured at the same instant the telemetry
+   * timebase was established. Lets consumers convert event `t` values to a
+   * wall clock so they can be aligned to frame capture timestamps.
+   */
+  wallBaseMs?: number;
 }
 
 export interface ZoomRegion {
