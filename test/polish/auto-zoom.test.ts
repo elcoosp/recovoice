@@ -36,10 +36,8 @@ describe('analyzeZoomRegions', () => {
     const r = regions[0]!;
     expect(r.startMs).toBeLessThanOrEqual(0);
     expect(r.endMs).toBeGreaterThanOrEqual(900);
-    expect(r.focus.cx).toBeGreaterThan(90);
-    expect(r.focus.cx).toBeLessThan(120);
-    expect(r.focus.cy).toBeGreaterThan(90);
-    expect(r.focus.cy).toBeLessThan(120);
+    expect(r.focus.cx).toBe(VIEWPORT.width / 3);
+    expect(r.focus.cy).toBe(VIEWPORT.height / 3);
     expect(r.depth).toBe(DEFAULT_AUTO_ZOOM_CONFIG.defaultDepth);
   });
 
@@ -54,7 +52,7 @@ describe('analyzeZoomRegions', () => {
     expect(r.startMs).toBeGreaterThanOrEqual(
       DEFAULT_AUTO_ZOOM_CONFIG.minRegionStartMs,
     );
-    expect(r.focus).toEqual({ cx: 800, cy: 600 });
+    expect(r.focus).toEqual({ cx: 800, cy: 800 - 800 / 3 });
   });
 
   it('caps dwell regions so long parked waits release the zoom', () => {
@@ -64,6 +62,7 @@ describe('analyzeZoomRegions', () => {
     }
     const regions = analyzeZoomRegions(telemetry(events), {
       maxDwellMs: 2000,
+      minRegionStartMs: 0,
     });
     expect(regions).toHaveLength(1);
     expect(regions[0]!.endMs - regions[0]!.startMs).toBeLessThanOrEqual(2000);
@@ -122,8 +121,9 @@ describe('analyzeZoomRegions', () => {
     });
     expect(regions.length).toBeGreaterThanOrEqual(1);
     const r = regions[0]!;
-    expect(r.focus.cx).toBeGreaterThan(390);
-    expect(r.focus.cx).toBeLessThan(415);
+    expect(r.focus.cx).toBe(VIEWPORT.width / 3);
+    expect(r.focus.cy).toBeGreaterThan(290);
+    expect(r.focus.cy).toBeLessThan(310);
   });
 
   it('zooms on a single click by default', () => {
@@ -134,7 +134,19 @@ describe('analyzeZoomRegions', () => {
       minRegionStartMs: 0,
     });
     expect(regions).toHaveLength(1);
-    expect(regions[0]!.focus).toEqual({ cx: 400, cy: 300 });
+    expect(regions[0]!.focus).toEqual({ cx: 1280 / 3, cy: 300 });
+  });
+
+  it('keeps the camera view inside the viewport for edge clusters', () => {
+    const events: CursorTelemetry['events'] = [{ t: 0, x: 30, y: 20, type: 'click' }];
+    const regions = analyzeZoomRegions(telemetry(events), {
+      minRegionStartMs: 0,
+    });
+    expect(regions).toHaveLength(1);
+    expect(regions[0]!.focus).toEqual({
+      cx: VIEWPORT.width / 3,
+      cy: VIEWPORT.height / 3,
+    });
   });
 
   it('respects custom minDwellMs', () => {
@@ -180,6 +192,51 @@ describe('analyzeZoomRegions', () => {
       minRegionStartMs: 0,
     });
     expect(regions).toHaveLength(1);
+  });
+
+  it('focuses on the opened dialog, not the screen-spanning centroid, when a modal opens (workflow begin)', () => {
+    const events: CursorTelemetry['events'] = [];
+    // dwell over the "Workflow" rail button (bottom-right) before clicking it
+    for (let t = 62000; t <= 62890; t += 90) {
+      events.push({ t, x: 1185, y: 720, type: 'move' });
+    }
+    events.push({ t: 62898, x: 1183, y: 746, type: 'click' });
+    // click "New" in the top-right panel header; the dialog opens centered
+    events.push({ t: 64015, x: 1120, y: 20, type: 'click' });
+    // dwell + type into the dialog's name field (screen center)
+    for (let t = 64660; t <= 65900; t += 80) {
+      events.push({ t, x: 600, y: 307, type: 'move' });
+    }
+    const regions = analyzeZoomRegions(telemetry(events), {
+      viewport: { width: 1200, height: 800 },
+    });
+    expect(regions.length).toBeGreaterThanOrEqual(1);
+    const r = regions[0]!;
+    expect(r.focus.cx).toBeGreaterThan(540);
+    expect(r.focus.cx).toBeLessThan(680);
+    expect(r.focus.cy).toBeGreaterThan(250);
+    expect(r.focus.cy).toBeLessThan(380);
+  });
+
+  it('centers on the dialog buttons when edits strike two distant rows (workflow save/edit/cancel)', () => {
+    const events: CursorTelemetry['events'] = [];
+    for (let t = 66480; t <= 67790; t += 80) {
+      events.push({ t, x: 772, y: 561, type: 'move' });
+    }
+    events.push({ t: 66592, x: 773, y: 592, type: 'click' });
+    events.push({ t: 68145, x: 1075, y: 104, type: 'click' });
+    for (let t = 67890; t <= 68960; t += 80) {
+      events.push({ t, x: 1063, y: 131, type: 'move' });
+    }
+    events.push({ t: 69244, x: 701, y: 592, type: 'click' });
+    const regions = analyzeZoomRegions(telemetry(events), {
+      viewport: { width: 1200, height: 800 },
+    });
+    expect(regions.length).toBeGreaterThanOrEqual(1);
+    const r = regions[0]!;
+    expect(r.focus.cx).toBeGreaterThan(680);
+    expect(r.focus.cx).toBeLessThan(830);
+    expect(r.focus.cy).toBe(800 - 800 / 3);
   });
 
   it('assigns unique IDs to each region', () => {
