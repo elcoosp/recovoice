@@ -2,10 +2,15 @@ import type {
   ConnectedTransition,
   ZoomRegion,
 } from '../types/recording.js';
-import { easeInOutCubic, easeConnectedPan, linear } from './easing.js';
+import {
+  easeInOutCubic,
+  easeInOutQuint,
+  easeConnectedPan,
+  linear,
+} from './easing.js';
 
-export const ZOOM_IN_DURATION_MS = 600;
-export const ZOOM_OUT_DURATION_MS = 400;
+export const ZOOM_IN_DURATION_MS = 1500;
+export const ZOOM_OUT_DURATION_MS = 1000;
 
 export interface CameraState {
   scale: number;
@@ -47,7 +52,7 @@ export function computeCameraState(
   );
   if (justEnded) {
     const t = (tMs - justEnded.endMs) / ZOOM_OUT_DURATION_MS;
-    const progress = easeInOutCubic(t);
+    const progress = easeInOutQuint(t);
     const from = focusToCamera(justEnded.focus, justEnded.depth, viewport);
     const to = identity();
     return lerpState(from, to, progress);
@@ -65,7 +70,7 @@ function computeActiveScale(region: ZoomRegion, tMs: number): number {
   );
   if (elapsed >= zoomInDuration) return region.depth;
   const t = elapsed / zoomInDuration;
-  const progress = easeInOutCubic(t);
+  const progress = easeInOutQuint(t);
   return 1 + (region.depth - 1) * progress;
 }
 
