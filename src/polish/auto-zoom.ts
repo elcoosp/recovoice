@@ -22,20 +22,24 @@ export const DEFAULT_AUTO_ZOOM_CONFIG: Required<AutoZoomConfig> = {
   dwellRadiusPx: 100,
   minClickCluster: 1,
   clickClusterTimeMs: 3000,
-  minClickRegionMs: 1200,
-  maxDwellMs: 1800,
-  minRegionStartMs: 1500,
-  maxRegionMs: 2600,
-  minGapBetweenRegionsMs: 0,
+  minClickRegionMs: 2400,
+  maxDwellMs: 2600,
+  minRegionStartMs: 2500,
+  maxRegionMs: 3200,
+  minGapBetweenRegionsMs: 500,
   defaultDepth: 1.5,
 };
+
+interface CursorSample {
+  t: number;
+  x: number;
+  y: number;
+}
 
 interface RawRegion {
   startMs: number;
   endMs: number;
-  sumX: number;
-  sumY: number;
-  count: number;
+  points: CursorSample[];
   source: 'dwell' | 'click';
 }
 
@@ -55,16 +59,85 @@ export function analyzeZoomRegions(
     height: 800,
   };
 
-  return merged.map((r, i) => ({
-    id: `zoom-${i + 1}`,
-    startMs: r.startMs,
-    endMs: r.endMs,
-    focus: {
-      cx: Math.min(width, Math.max(0, r.sumX / r.count)),
-      cy: Math.min(height, Math.max(0, r.sumY / r.count)),
-    },
-    depth: cfg.defaultDepth,
-  }));
+  const depth = cfg.defaultDepth;
+
+  return merged.map((r, i) => {
+    const focus = computeRegionFocus(r, cfg);
+    return {
+      id: `zoom-${i + 1}`,
+      startMs: r.startMs,
+      endMs: r.endMs,
+      focus: clampFocusToViewport(focus, depth, width, height),
+      depth,
+    };
+  });
+}
+
+/**
+ * Clamp a focus point so the camera's visible rectangle at this depth stays
+ * within the app viewport. A depth-1.5 zoomed view finds its edges at
+ * width/(2*depth) and width - width/(2*depth). Without this, clusters near the
+ * screen edges (e.g. cursor resting on the title bar at y=0) push the camera
+ * so far past the edge that half the frame is empty void, which reads as
+ * random or broken framing.
+ */
+export function clampFocusToViewport(
+  focus: { cx: number; cy: number },
+  depth: number,
+  width: number,
+  height: number,
+): { cx: number; cy: number } {
+  const safeDepth = Math.max(1, depth);
+  const halfW = width / (2 * safeDepth);
+  const halfH = height / (2 * safeDepth);
+  return {
+    cx: Math.min(Math.max(focus.cx, halfW), width - halfW),
+    cy: Math.min(Math.max(focus.cy, halfH), height - halfH),
+  };
+}
+
+/**
+ * A merged region can blend cursor activity across several spatially separate
+ * sites (e.g. clicking a rail button, opening a dialog, then typing in its
+ * fields). Averaging all of those samples lands the camera in empty space
+ * between the sites. Instead, focus on the spatial cluster that holds the
+ * region's LAST interaction — that is where the user actually ended up
+ * (e.g. the freshly opened dialog or the button they just pressed).
+ */
+function computeRegionFocus(
+  r: RawRegion,
+  cfg: Required<AutoZoomConfig>,
+): { cx: number; cy: number } {
+  const sorted = [...r.points].sort((a, b) => a.t - b.t);
+  const radiusSq = cfg.dwellRadiusPx * cfg.dwellRadiusPx;
+  const clusters: Array<{ sumX: number; sumY: number; count: number }> = [];
+  let lastCluster = -1;
+
+  for (let i = 0; i < sorted.length; i++) {
+    const p = sorted[i]!;
+    let placed = -1;
+    for (let k = 0; k < clusters.length; k++) {
+      const c = clusters[k]!;
+      const dx = p.x - c.sumX / c.count;
+      const dy = p.y - c.sumY / c.count;
+      if (dx * dx + dy * dy <= radiusSq) {
+        placed = k;
+        break;
+      }
+    }
+    if (placed >= 0) {
+      clusters[placed]!.sumX += p.x;
+      clusters[placed]!.sumY += p.y;
+      clusters[placed]!.count += 1;
+    } else {
+      clusters.push({ sumX: p.x, sumY: p.y, count: 1 });
+      placed = clusters.length - 1;
+    }
+    if (i === sorted.length - 1) lastCluster = placed;
+  }
+
+  const target = clusters[lastCluster] ?? clusters[0]!;
+  return { cx: target.sumX / target.count, cy: target.sumY / target.count };
 }
 
 /**
@@ -116,6 +189,7 @@ function findDwellRegions(
     let sumX = 0;
     let sumY = 0;
     let lastT = anchor.t;
+    const points: CursorSample[] = [];
 
     while (j < events.length) {
       const e = events[j]!;
@@ -125,6 +199,7 @@ function findDwellRegions(
       sumX += e.x;
       sumY += e.y;
       clusterCount++;
+      points.push({ t: e.t, x: e.x, y: e.y });
       lastT = e.t;
       j++;
     }
@@ -136,9 +211,7 @@ function findDwellRegions(
       regions.push({
         startMs: anchor.t,
         endMs: Math.min(lastT, anchor.t + cfg.maxDwellMs),
-        sumX,
-        sumY,
-        count: clusterCount,
+        points,
         source: 'dwell',
       });
       i = j;
@@ -161,15 +234,13 @@ function findClickRegions(
   while (i < clicks.length) {
     const anchor = clicks[i]!;
     let j = i;
-    let sumX = 0;
-    let sumY = 0;
     let count = 0;
+    const points: CursorSample[] = [];
 
     while (j < clicks.length) {
       const c = clicks[j]!;
       if (c.t - anchor.t > cfg.clickClusterTimeMs) break;
-      sumX += c.x;
-      sumY += c.y;
+      points.push({ t: c.t, x: c.x, y: c.y });
       count++;
       j++;
     }
@@ -184,9 +255,7 @@ function findClickRegions(
           Math.max(lastT, anchor.t + cfg.minClickRegionMs),
           anchor.t + cfg.maxRegionMs,
         ),
-        sumX,
-        sumY,
-        count,
+        points,
         source: 'click',
       });
       i = j;
@@ -208,9 +277,7 @@ function mergeRegions(regions: RawRegion[]): RawRegion[] {
     const r = sorted[i]!;
     if (r.startMs <= current.endMs) {
       current.endMs = Math.max(current.endMs, r.endMs);
-      current.sumX += r.sumX;
-      current.sumY += r.sumY;
-      current.count += r.count;
+      current.points = [...current.points, ...r.points];
     } else {
       merged.push(current);
       current = { ...r };
