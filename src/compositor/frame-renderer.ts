@@ -210,6 +210,29 @@ function drawCursor(
     ctx.restore();
   }
 
+  // Click ripple ring: a soft circle fades in and expands at the click point
+  // so the target of each click is unmistakable.
+  if (cursor.clickRipple > 0.005) {
+    const ringX =
+      rect.x + rect.width / 2 + (cursor.clickX - focusX) * totalScale;
+    const ringY =
+      rect.y + rect.height / 2 + (cursor.clickY - focusY) * totalScale;
+    const radius = 8 + 30 * cursor.clickRipple;
+    ctx.save();
+    ctx.globalAlpha = cursor.clickRipple * 0.12;
+    ctx.fillStyle = '#60a5fa';
+    ctx.beginPath();
+    ctx.arc(ringX, ringY, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = cursor.clickRipple * 0.9;
+    ctx.strokeStyle = '#60a5fa';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(ringX, ringY, radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   // Main cursor with click pulse
   const pulseScale = 1 + cursor.clickPulse * 0.15;
   ctx.save();
