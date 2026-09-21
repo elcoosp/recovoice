@@ -1,8 +1,6 @@
 import { spawn, execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync } from 'node:fs';
-import { openSync, writeSync, closeSync, rmSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { tmpdir } from 'node:os';
+import { dirname } from 'node:path';
 import type { Compositor, CompositorOptions } from '../recording/types.js';
 import type { CursorTelemetry, PolishConfig } from '../types/recording.js';
 import { analyzePolishing } from '../polish/pipeline.js';
@@ -159,6 +157,18 @@ class PolishCompositor implements Compositor {
           })
         : baseAnalysis;
 
+    if (process.env.RECOVOICE_DEBUG) {
+      try {
+        const { writeFileSync } = await import('node:fs');
+        writeFileSync(
+          '/tmp/recovoice-analysis.json',
+          JSON.stringify({ zoomRegions: analysis.zoomRegions, transitions: analysis.transitions }, null, 2),
+        );
+      } catch {
+        /* best-effort analysis dump */
+      }
+    }
+
     const polish = this.opts.polish ?? {};
     const scheduleInput: Parameters<typeof scheduleFrames>[0] = {
       durationMs: this.opts.durationMs,
@@ -182,6 +192,12 @@ class PolishCompositor implements Compositor {
 
     const schedules = Array.from(scheduleFrames(scheduleInput));
 
+    if (process.env.RECOVOICE_DEBUG) {
+      console.error(
+        `[polish] durationMs=${this.opts.durationMs} fps=${this.opts.fps} schedules=${schedules.length} frameTimes=${opts.frameTimesMs ? opts.frameTimesMs.length : 'none'}`,
+      );
+    }
+
     if (schedules.length === 0) {
       throw new Error('Polish compositor produced zero frames to render');
     }
@@ -198,6 +214,16 @@ class PolishCompositor implements Compositor {
       this.opts.fps,
     );
     const encoder = this.startFrameEncoder(opts, outputSize, this.opts.fps);
+
+    // When per-frame display times are supplied (narration-normalized
+    // recording), each output frame reuses a source frame rather than being
+    // a one-to-one copy: advance the source only while its own video time has
+    // passed. This stretches/compresses the capture onto the schedule.
+    const frameTimes = opts.frameTimesMs && opts.frameTimesMs.length >= 2
+      ? opts.frameTimesMs
+      : null;
+    let sourceBuf: Buffer | null = null;
+    let sourceIndex = 0;
 
     const canvas = createNapiCanvas(outputSize.width, outputSize.height);
     const scratchCanvas = createNapiCanvas(viewport.width, viewport.height);
@@ -222,8 +248,26 @@ class PolishCompositor implements Compositor {
     }
 
     try {
+let written = 0;
       for (const schedule of schedules) {
-        const frameBuf = await decoder.nextFrame();
+        let frameBuf: Buffer | null;
+        if (frameTimes) {
+          while (
+            sourceIndex < frameTimes.length &&
+            frameTimes[sourceIndex]! <= schedule.tMs
+          ) {
+            const nextBuf = await decoder.nextFrame();
+            if (nextBuf) {
+              sourceBuf = nextBuf;
+              sourceIndex++;
+            } else {
+              sourceIndex = frameTimes.length;
+            }
+          }
+          frameBuf = sourceBuf;
+        } else {
+          frameBuf = await decoder.nextFrame();
+        }
         if (!frameBuf) break;
 
         this.blitRgbaToCanvas(
@@ -246,6 +290,16 @@ class PolishCompositor implements Compositor {
         const zoomBlurRadius = zoomBlurEnabled
           ? computeZoomBlurRadius(schedule.cameraVelocity)
           : 0;
+        if (
+          process.env.RECOVOICE_DEBUG &&
+          schedule.tMs >= 55000 &&
+          schedule.tMs <= 70000 &&
+          schedule.tMs % 250 < 16
+        ) {
+          console.error(
+            `[polish:wf] t=${schedule.tMs.toFixed(0)} camera=${JSON.stringify(schedule.camera)} cursor=${JSON.stringify({ x: schedule.cursor.x, y: schedule.cursor.y, visible: schedule.cursor.visible, clickX: schedule.cursor.clickX, clickY: schedule.cursor.clickY, ripple: schedule.cursor.clickRipple })}`,
+          );
+        }
         const renderInput: Parameters<typeof renderFrame>[1] = {
           video: scratchCanvas,
           videoWidth: viewport.width,
@@ -273,6 +327,10 @@ class PolishCompositor implements Compositor {
           outputSize.height,
         );
         await encoder.writeFrame(rgba);
+        written++;
+      }
+      if (process.env.RECOVOICE_DEBUG) {
+        console.error(`[polish] wrote ${written} frames`);
       }
       await encoder.finish();
       decoder.close();
@@ -334,8 +392,24 @@ class PolishCompositor implements Compositor {
     let ended = false;
     const waiters: Array<(b: Buffer | null) => void> = [];
 
+    // Bound decoder buffering so a slow consumer (e.g. the encoder pipe) can
+    // never flood Node's memory and stall the event loop. This mirrors the
+    // backpressure between streaming and rendering that keeps long runs alive.
+    const maxBuffered = frameSize * 8;
+    const resume = (): void => {
+      if (
+        !ended &&
+        proc.stdout.readable &&
+        proc.stdout.isPaused() &&
+        buffer.length < maxBuffered
+      ) {
+        proc.stdout.resume();
+      }
+    };
+
     proc.stdout.on('data', (chunk: Buffer) => {
       buffer = Buffer.concat([buffer, chunk]);
+      if (buffer.length >= maxBuffered) proc.stdout.pause();
       while (buffer.length >= frameSize && waiters.length > 0) {
         const frame = buffer.subarray(0, frameSize);
         buffer = buffer.subarray(frameSize);
@@ -357,6 +431,7 @@ class PolishCompositor implements Compositor {
         if (buffer.length >= frameSize) {
           const frame = buffer.subarray(0, frameSize);
           buffer = buffer.subarray(frameSize);
+          resume();
           return Promise.resolve(Buffer.from(frame));
         }
         if (ended) return Promise.resolve(null);
@@ -368,6 +443,11 @@ class PolishCompositor implements Compositor {
     };
   }
 
+  /**
+   * Stream RGBA frames directly into an ffmpeg encoder's stdin. No frames are
+   * staged on disk, so memory use stays at one frame and there is no unbounded
+   * `.raw` temp file to fill the disk.
+   */
   private startFrameEncoder(
     opts: CompositorOptions,
     size: { width: number; height: number },
@@ -377,78 +457,13 @@ class PolishCompositor implements Compositor {
     finish: () => Promise<void>;
     kill: () => void;
   } {
-    const tmpVideo = join(
-      tmpdir(),
-      `recovoice-polish-${process.pid}-${Date.now()}.raw`,
-    );
-    const fd = openSync(tmpVideo, 'w');
-    const self = this;
-    return {
-      writeFrame(buf: Buffer): Promise<void> {
-        return new Promise((resolve, reject) => {
-          try {
-            writeSync(fd, buf);
-            resolve();
-          } catch (err) {
-            reject(err);
-          }
-        });
-      },
-      finish(): Promise<void> {
-        return new Promise((resolve, reject) => {
-          try {
-            closeSync(fd);
-          } catch {
-            /* ignore */
-          }
-          self
-            .encodeRawFile(opts, size, fps, tmpVideo)
-            .then(() => {
-              try {
-                rmSync(tmpVideo, { force: true });
-              } catch {
-                /* ignore */
-              }
-              resolve();
-            })
-            .catch((err) => {
-              try {
-                rmSync(tmpVideo, { force: true });
-              } catch {
-                /* ignore */
-              }
-              reject(err);
-            });
-        });
-      },
-      kill(): void {
-        try {
-          closeSync(fd);
-        } catch {
-          /* ignore */
-        }
-        try {
-          rmSync(tmpVideo, { force: true });
-        } catch {
-          /* ignore */
-        }
-      },
-    };
-  }
-
-  private encodeRawFile(
-    opts: CompositorOptions,
-    size: { width: number; height: number },
-    fps: number,
-    rawPath: string,
-  ): Promise<void> {
     const args: string[] = [
       '-y',
       '-f', 'rawvideo',
       '-pix_fmt', 'rgba',
       '-s', `${size.width}x${size.height}`,
       '-r', String(fps),
-      '-i', rawPath,
+      '-i', '-',
     ];
 
     const hasAudio = opts.audioTrackPath
@@ -473,16 +488,111 @@ class PolishCompositor implements Compositor {
 
     args.push(opts.output);
 
-    return new Promise((resolve, reject) => {
-      const proc = spawn(this.ffmpegPath, args, {
-        stdio: ['ignore', 'ignore', 'inherit'],
-      });
-      proc.on('error', (err) => reject(err));
-      proc.on('exit', (code) => {
-        if (code === 0) resolve();
-        else reject(new Error(`ffmpeg encoder exited with code ${code}`));
-      });
+    const proc = spawn(this.ffmpegPath, args, {
+      stdio: ['pipe', 'ignore', 'inherit'],
     });
+
+    let exitCode: number | null = null;
+    const exitWaiters: Array<() => void> = [];
+    let launchError: Error | undefined;
+    proc.on('error', (err) => {
+      launchError = err;
+    });
+    proc.on('exit', (code) => {
+      exitCode = code;
+      while (exitWaiters.length > 0) exitWaiters.shift()!();
+    });
+
+    const settle = (
+      resolve: () => void,
+      reject: (err: Error) => void,
+      label: string,
+    ): void => {
+      if (launchError) {
+        reject(
+          new Error(
+            `Failed to launch ffmpeg encoder (${this.ffmpegPath}): ${launchError.message}`,
+          ),
+        );
+      } else if (exitCode === 0) {
+        resolve();
+      } else if (exitCode !== null) {
+        reject(
+          new Error(`ffmpeg encoder exited with code ${exitCode} (${label})`),
+        );
+      } else {
+        reject(new Error(`ffmpeg encoder ${label}: encoder state unknown`));
+      }
+    };
+
+    const stdinReady = (): boolean =>
+      !launchError && exitCode === null && !proc.stdin.destroyed;
+
+    // Streaming frames one at a time and awaiting `drain` after every write
+    // throttles ffmpeg's rawvideo pipe demuxer and stalls long runs. Instead,
+    // keep the pipe continuously fed and only back off once Node has buffered
+    // a full high-water mark; resume the moment it drains back down.
+    const maxBuffered = 128 * 1024 * 1024;
+    return {
+      writeFrame(buf: Buffer): Promise<void> {
+        return new Promise((resolve, reject) => {
+          if (!stdinReady()) {
+            settle(resolve, reject, 'writeFrame');
+            return;
+          }
+          let ok: boolean;
+          try {
+            ok = proc.stdin.write(buf);
+          } catch (err) {
+            reject(err as Error);
+            return;
+          }
+          if (!ok || proc.stdin.writableLength > maxBuffered) {
+            const onDrain = (): void => {
+              if (!stdinReady()) {
+                proc.stdin.removeListener('drain', onDrain);
+                settle(resolve, reject, 'writeFrame-drain');
+                return;
+              }
+              if (proc.stdin.writableLength <= maxBuffered / 2) {
+                proc.stdin.removeListener('drain', onDrain);
+                resolve();
+              }
+            };
+            proc.stdin.on('drain', onDrain);
+          } else {
+            resolve();
+          }
+        });
+      },
+      finish(): Promise<void> {
+        return new Promise((resolve, reject) => {
+          if (!stdinReady()) {
+            settle(resolve, reject, 'finish');
+            return;
+          }
+          proc.stdin.end(() => {
+            if (stdinReady()) {
+              exitWaiters.push(() => settle(resolve, reject, 'finish-exit'));
+            } else {
+              settle(resolve, reject, 'finish-end');
+            }
+          });
+        });
+      },
+      kill(): void {
+        try {
+          proc.stdin.destroy();
+        } catch {
+          /* ignore */
+        }
+        try {
+          proc.kill('SIGKILL');
+        } catch {
+          /* ignore */
+        }
+      },
+    };
   }
 }
 
