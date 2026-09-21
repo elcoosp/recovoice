@@ -529,17 +529,27 @@ class TauriPlaywrightSession implements RecordingSession {
   }
 
   async startRecording(options: { path: string; fps: number }): Promise<void> {
+    // Self-heal: a previously aborted/killed process may leave the plugin's
+    // recorder in "in progress" state, which makes startRecording throw.
+    // Best-effort stop (ignored when nothing is in progress) clears it.
+    try {
+      await this.page.stopRecording();
+    } catch {
+      // ignore: no recording in progress
+    }
     this.recording = true;
     await raiseAppWindow(this.socketPath);
     await this.page.evaluate(() => {
       const w = window as unknown as {
         __cursorTelemetry?: unknown[];
         __cursorTelemetryTimebase?: number | null;
+        __cursorTelemetryWallBase?: number | null;
         __telemetryRecording?: boolean;
         __telemetryHeartbeat?: number | null;
         __TP_PUSH?: (type: string, x: number, y: number) => void;
       };
       w.__cursorTelemetryTimebase = performance.now();
+      w.__cursorTelemetryWallBase = Date.now();
       w.__cursorTelemetry = [];
       w.__telemetryRecording = true;
       // Parked-cursor heartbeat: the plugin's scripted actions do not emit
@@ -613,19 +623,30 @@ class TauriPlaywrightSession implements RecordingSession {
   }
 
   async moveCursorTo(selector: string): Promise<void> {
-    const wrapped = this.page as TauriPlaywrightPage & {
-      resolveTextSelector?: (s: string) => Promise<string>;
-    };
-    const resolved = wrapped.resolveTextSelector
-      ? await wrapped.resolveTextSelector(selector)
-      : selector;
-    await this.sweepCursor(elementCenterJs(resolved));
+    try {
+      const wrapped = this.page as TauriPlaywrightPage & {
+        resolveTextSelector?: (s: string) => Promise<string>;
+      };
+      const resolved = wrapped.resolveTextSelector
+        ? await wrapped.resolveTextSelector(selector)
+        : selector;
+      await this.sweepCursor(elementCenterJs(resolved));
+    } catch {
+      // Cursor sweeps are cosmetic. If the capture loop starves the webview,
+      // skip the animation rather than abort the recording.
+    }
   }
 
   private async sweepCursor(targetExpression: string): Promise<void> {
-    const target = await this.readCursorTarget(targetExpression);
-    if (!target) return;
-    await this.sweepPath(target.x, target.y);
+    try {
+      const target = await this.readCursorTarget(targetExpression);
+      if (!target) return;
+      await this.sweepPath(target.x, target.y);
+    } catch {
+      // Under heavy capture load, evaluate calls may time out.  Skip the
+      // sweep animation — the click/type action will still fire at the
+      // correct element via the plugin's own selector resolution.
+    }
   }
 
   private async readCursorTarget(
@@ -690,6 +711,7 @@ class TauriPlaywrightSession implements RecordingSession {
           type: string;
         }>;
         __cursorTelemetryTimebase?: number | null;
+        __cursorTelemetryWallBase?: number | null;
       };
       return {
         events: (w.__cursorTelemetry ?? []) as Array<{
@@ -699,6 +721,7 @@ class TauriPlaywrightSession implements RecordingSession {
           type: string;
         }>,
         timebase: w.__cursorTelemetryTimebase ?? 0,
+        wallBase: w.__cursorTelemetryWallBase ?? 0,
       };
     });
     const timebase = rawResult?.timebase ?? 0;
@@ -717,6 +740,7 @@ class TauriPlaywrightSession implements RecordingSession {
     return {
       events,
       timebaseOrigin: 0,
+      wallBaseMs: rawResult?.wallBase ?? 0,
       viewport: {
         width: viewport?.width ?? 1280,
         height: viewport?.height ?? 800,
