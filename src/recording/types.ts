@@ -34,6 +34,13 @@ export interface CompositorOptions {
    */
   audioTrackPath?: string;
   captionsPath?: string;
+  /**
+   * Video time (ms) at which each captured source frame should be displayed.
+   * When present, the compositor lays the source frames onto this timeline
+   * (i.e. it does not consume one frame per output frame) so the rendered video
+   * can span a different duration than the raw capture, e.g. the narration.
+   */
+  frameTimesMs?: number[];
   polish?: unknown;
   output: string;
 }
