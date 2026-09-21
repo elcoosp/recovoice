@@ -96,6 +96,14 @@ export const easeInOutCubic: EasingFunction = cubicBezier(
   1,
 );
 
+/** Strongly eased in/out ramp: holds near the ends, glides in the middle. */
+export const easeInOutQuint: EasingFunction = cubicBezier(
+  0.83,
+  0,
+  0.17,
+  1,
+);
+
 export const easeOutCubic: EasingFunction = cubicBezier(
   0.215,
   0.61,
