@@ -117,7 +117,9 @@ describe('end-to-end pipeline', () => {
      });
     const result = await recovoice.run();
 
-    const analysis = analyzePolishing(result.telemetry, {});
+    const analysis = analyzePolishing(result.telemetry, {
+      autoZoom: { minRegionStartMs: 0 },
+    });
     // Dwell + click cluster should produce at least one zoom region
     expect(analysis.zoomRegions.length).toBeGreaterThanOrEqual(1);
 
